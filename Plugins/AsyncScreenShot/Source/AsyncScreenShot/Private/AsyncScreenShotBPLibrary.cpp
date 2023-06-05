@@ -65,7 +65,9 @@ BITMAPINFOHEADER createBitmapHeader(int width, int height)
 HBITMAP GdiPlusScreenCapture(HWND hWnd)
 {
     // get handles to a device context (DC)
-    HDC hwindowDC = GetDC(0);
+
+    HDC hwindowDC = GetDC(hWnd);
+    
     HDC hwindowCompatibleDC = CreateCompatibleDC(hwindowDC);
     SetStretchBltMode(hwindowCompatibleDC, COLORONCOLOR);
 
@@ -82,7 +84,7 @@ HBITMAP GdiPlusScreenCapture(HWND hWnd)
         width = rect.right - rect.left;
         height = rect.bottom - rect.top;
     }
-
+    
     // create a bitmap
     HBITMAP hbwindow = CreateCompatibleBitmap(hwindowDC, width, height);
     BITMAPINFOHEADER bi = createBitmapHeader(width, height);
@@ -103,9 +105,8 @@ HBITMAP GdiPlusScreenCapture(HWND hWnd)
     // avoid memory leak
     DeleteDC(hwindowCompatibleDC);
     ReleaseDC(hWnd, hwindowDC);
-
     //delete lpbitmap;
-
+    
     return hbwindow;
 }
 
@@ -165,13 +166,16 @@ void UAsyncScreenShotBPLibrary::SaveGameScreen(FString PathToSave, FString Name)
         Name = "Blank";
     }
     
-    /* Unreal engine async method
-    AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [] {
+    
+    AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [PathToSave, Name] {
         GdiplusStartupInput GDIplusStartupInput;
         ULONG_PTR GDIplusToken;
         GdiplusStartup(&GDIplusToken, &GDIplusStartupInput, NULL);
+
+        FString FullPath = PathToSave + FString("\\") + Name + FString(".");
+
         // get the bitmap handle to the bitmap screenshot
-        HWND hWnd = GetForegroundWindow();
+        HWND hWnd = static_cast<HWND>(GEngine->GameViewport->GetWindow()->GetNativeWindow()->GetOSWindowHandle());
         HBITMAP hBmp = GdiPlusScreenCapture(hWnd);
 
         // save as png to memory 
@@ -181,17 +185,19 @@ void UAsyncScreenShotBPLibrary::SaveGameScreen(FString PathToSave, FString Name)
         if (SaveToMemory(&hBmp, data, dataFormat))
         {
             // save from memory to file
-            std::ofstream fout("C:\\Users\\kahas\\Pictures\\Camera Roll\\Screenshot-m1." + dataFormat, std::ios::binary);
+            std::ofstream fout(std::string(TCHAR_TO_UTF8(*FullPath)) + dataFormat, std::ios::binary);
             fout.write((char*)data.data(), data.size());
         }
+
         GdiplusShutdown(GDIplusToken);
 
         });
 
     
-    */
+    /* Unreal engine async method
     std::thread my_thread([PathToSave, Name] {
         
+
         GdiplusStartupInput GDIplusStartupInput;
         ULONG_PTR GDIplusToken;
         GdiplusStartup(&GDIplusToken, &GDIplusStartupInput, NULL);
@@ -214,10 +220,11 @@ void UAsyncScreenShotBPLibrary::SaveGameScreen(FString PathToSave, FString Name)
         }
 
         GdiplusShutdown(GDIplusToken);
+
         });
    
     my_thread.detach();
-    
+    */
 }
 #endif
 
