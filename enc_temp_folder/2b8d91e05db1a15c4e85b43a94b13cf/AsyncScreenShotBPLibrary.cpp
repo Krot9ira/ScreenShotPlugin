@@ -196,7 +196,7 @@ void UAsyncScreenShotBPLibrary::SaveGameScreen(FString PathToSave, FString Name)
         ULONG_PTR GDIplusToken;
         GdiplusStartup(&GDIplusToken, &GDIplusStartupInput, NULL);
 
-        FString FullPath = PathToSave + FString("\\") + Name + FString(".");
+        FString FullPath = PathToSave + FString("\\") + Name;
    
         // get the bitmap handle to the bitmap screenshot
         HWND hWnd = static_cast<HWND>(GEngine->GameViewport->GetWindow()->GetNativeWindow()->GetOSWindowHandle());
