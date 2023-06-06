@@ -63,30 +63,31 @@ int CaptureAnImage(HWND hWnd, string path)
 
     // Get the client area for size calculation.
     RECT rcClient;
+    RECT rcWindow;
     GetClientRect(hWnd, &rcClient);
-    WINDOWPLACEMENT WindowPosition = {};
-    WindowPosition.length = sizeof(WINDOWPLACEMENT);
-    GetWindowPlacement(hWnd, &WindowPosition);
+    GetWindowRect(hWnd, &rcWindow);
     // This is the best stretch mode.
     SetStretchBltMode(hdcWindow, COLORONCOLOR);
-    
-    // The source DC is the entire screen, and the destination DC is the current window (HWND).
-    if (!StretchBlt(hdcWindow,
-        0, 0,
-        rcClient.right, rcClient.bottom,
-        hdcScreen,
-        WindowPosition.rcNormalPosition.left, WindowPosition.rcNormalPosition.top,
-        rcClient.right, rcClient.bottom,
-        SRCCOPY))
-    {
-        MessageBox(hWnd, L"StretchBlt has failed", L"Failed", MB_OK);
-        DeleteObject(hbmScreen);
-        DeleteObject(hdcMemDC);
-        ReleaseDC(NULL, hdcScreen);
-        ReleaseDC(hWnd, hdcWindow);
+    // TakeAllScreen
+        if (!StretchBlt(hdcWindow,
+            0, 0,
+            rcClient.right, rcClient.bottom,
+            hdcScreen,
+            rcWindow.left, rcWindow.top,
+            rcClient.right, rcClient.bottom,
+            SRCCOPY))
+        {
+            MessageBox(hWnd, L"StretchBlt has failed", L"Failed", MB_OK);
+            DeleteObject(hbmScreen);
+            DeleteObject(hdcMemDC);
+            ReleaseDC(NULL, hdcScreen);
+            ReleaseDC(hWnd, hdcWindow);
 
-        return 0;
-    }
+            return 0;
+        }
+
+    
+    
 
     // Create a compatible bitmap from the Window DC.
     hbmScreen = CreateCompatibleBitmap(hdcWindow, rcClient.right - rcClient.left, rcClient.bottom - rcClient.top);
