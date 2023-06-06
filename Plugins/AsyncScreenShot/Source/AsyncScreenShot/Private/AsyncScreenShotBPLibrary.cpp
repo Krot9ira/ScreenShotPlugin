@@ -20,6 +20,14 @@ UAsyncScreenShotBPLibrary::UAsyncScreenShotBPLibrary(const FObjectInitializer& O
 #include <stdio.h>
 #include <fstream>
 #include <iostream>
+#if __cplusplus < 201703L // If the version of C++ is less than 17
+#include <experimental/filesystem>
+// It was still in the experimental:: namespace
+namespace fs = std::experimental::filesystem;
+#else
+#include <filesystem>
+namespace fs = std::filesystem;
+#endif
 
 
 using namespace Gdiplus;
@@ -158,6 +166,7 @@ int CaptureAnImage(HWND hWnd, string path)
     std::wstring stemp = std::wstring(path.begin(), path.end());
     LPCWSTR sw = stemp.c_str();
     // A file is created, this is where we will save the screen capture.
+    
     hFile = CreateFile(sw,
         GENERIC_WRITE,
         0,
@@ -215,13 +224,16 @@ void UAsyncScreenShotBPLibrary::SaveGameScreen(FString PathToSave, FString Name)
         ULONG_PTR GDIplusToken;
         GdiplusStartup(&GDIplusToken, &GDIplusStartupInput, NULL);
 
-       
-
-        FString FullPath = PathToSave + FString("\\") + Name + FString(".bmp");
-
+        FString FullPath = PathToSave  + Name + FString(".bmp");
+        string FolderPath = std::string(TCHAR_TO_UTF8(*PathToSave));
+        FolderPath.pop_back();
+        std::wstring stemp = std::wstring(FolderPath.begin(), FolderPath.end());
+        LPCWSTR sw = stemp.c_str();
         // get the bitmap handle to the bitmap screenshot
         HWND hWnd = static_cast<HWND>(GEngine->GameViewport->GetWindow()->GetNativeWindow()->GetOSWindowHandle());
 
+        //If folder not exist image will not save, so i make folder to be sure
+        fs::create_directories(FolderPath);
         CaptureAnImage(hWnd, std::string(TCHAR_TO_UTF8(*FullPath)));
         // save as png to memory 
        
@@ -257,8 +269,12 @@ void UAsyncScreenShotBPLibrary::SaveGameScreen(FString PathToSave, FString Name)
     my_thread.detach();
     */
 }
-#endif
 
+#endif
+FString UAsyncScreenShotBPLibrary::GetScreenshotSavePath()
+{
+    return FPaths::ConvertRelativePathToFull(FPaths::ScreenShotDir());
+}
 #if !PLATFORM_WINDOWS
 void UAsyncScreenShotBPLibrary::SaveGameScreen(FString PathToSave, FString Name)
 {
