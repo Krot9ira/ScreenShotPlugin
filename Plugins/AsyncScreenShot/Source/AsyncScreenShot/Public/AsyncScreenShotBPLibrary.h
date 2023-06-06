@@ -26,7 +26,7 @@ UCLASS()
 class UAsyncScreenShotBPLibrary : public UBlueprintFunctionLibrary
 {
 	GENERATED_UCLASS_BODY()
-		//When specifying the path, use \\, for example C:\\Users\\Krot9ira 
+		//When specifying the path, use \, for example C:\Users\Krot9ira 
 		UFUNCTION(BlueprintCallable, meta = (Category = "ScreenshotTaker Functionality"))
 		static void SaveGameScreen(FString PathToSave, FString Name);
 };
