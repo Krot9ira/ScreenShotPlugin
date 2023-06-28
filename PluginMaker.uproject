@@ -1,13 +1,14 @@
 {
 	"FileVersion": 3,
-	"EngineAssociation": "{5EEF433B-46A0-B1BF-0730-439252CACC36}",
+	"EngineAssociation": "5.1",
 	"Category": "",
 	"Description": "",
 	"Modules": [
 		{
 			"Name": "PluginMaker",
 			"Type": "Runtime",
-			"LoadingPhase": "Default"
+			"LoadingPhase": "Default",
+			"WhitelistPlatforms": "Win64"
 		}
 	],
 	"Plugins": [

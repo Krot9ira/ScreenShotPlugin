@@ -1,7 +1,15 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright 2023 Grigoryev Daniil. All Rights Reserved.
 
+#pragma once
 #include "AsyncScreenShotBPLibrary.h"
 #include "AsyncScreenShot.h"
+#include "Async/TaskGraphInterfaces.h"
+#include "EngineGlobals.h"
+#include "Engine/Engine.h"
+#include "Widgets/SWindow.h"
+#include "Engine/GameViewportClient.h"
+#include "Misc/Paths.h"
+#include "Async/Async.h"
 
 UAsyncScreenShotBPLibrary::UAsyncScreenShotBPLibrary(const FObjectInitializer& ObjectInitializer)
 : Super(ObjectInitializer)
@@ -11,23 +19,27 @@ UAsyncScreenShotBPLibrary::UAsyncScreenShotBPLibrary(const FObjectInitializer& O
 
 
 #if PLATFORM_WINDOWS
-#pragma once
 #include <windows.h>
+THIRD_PARTY_INCLUDES_START
 #include <gdiplus.h>
+THIRD_PARTY_INCLUDES_END
 #include <vector>
 #include <tchar.h>
 #include <thread>
 #include <stdio.h>
 #include <fstream>
 #include <iostream>
+
+/*
 #if __cplusplus < 201703L // If the version of C++ is less than 17
 #include <experimental/filesystem>
 // It was still in the experimental:: namespace
 namespace fs = std::experimental::filesystem;
-#else
+*/
+//#else
 #include <filesystem>
 namespace fs = std::filesystem;
-#endif
+//#endif
 
 
 using namespace Gdiplus;
@@ -233,7 +245,7 @@ void UAsyncScreenShotBPLibrary::SaveGameScreen(FString PathToSave, FString Name)
         HWND hWnd = static_cast<HWND>(GEngine->GameViewport->GetWindow()->GetNativeWindow()->GetOSWindowHandle());
 
         //If folder not exist image will not save, so i make folder to be sure
-        fs::create_directories(FolderPath);
+        filesystem::create_directories(FolderPath);
         CaptureAnImage(hWnd, std::string(TCHAR_TO_UTF8(*FullPath)));
         // save as png to memory 
        

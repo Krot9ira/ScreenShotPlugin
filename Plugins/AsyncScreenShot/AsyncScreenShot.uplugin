@@ -3,13 +3,13 @@
 	"Version": 1,
 	"VersionName": "1.0",
 	"FriendlyName": "AsyncScreenShot",
-	"Description": "",
-	"Category": "Other",
+	"Description": "Screenshot without spikes for windows",
+	"Category": "Code",
 	"CreatedBy": "Krot9ira",
 	"CreatedByURL": "https://github.com/Krot9ira",
-	"DocsURL": "",
-	"MarketplaceURL": "",
-	"SupportURL": "",
+	"DocsURL": "https://docs.google.com/document/d/1PbvmvAMlK23WUwCfmsbdlBsDIm_vXTAqXRS4YngUTbU",
+	"MarketplaceURL": "com.epicgames.launcher://ue/marketplace/product/c4e93aeb706440808b2ba47e07570a6f",
+	"SupportURL": "kahasr@gmail.com",
 	"CanContainContent": true,
 	"IsBetaVersion": false,
 	"IsExperimentalVersion": false,
@@ -18,7 +18,8 @@
 		{
 			"Name": "AsyncScreenShot",
 			"Type": "Runtime",
-			"LoadingPhase": "PreLoadingScreen"
+			"LoadingPhase": "PreLoadingScreen",
+			"WhitelistPlatforms": [ "Win64" ]
 		}
 	]
 }

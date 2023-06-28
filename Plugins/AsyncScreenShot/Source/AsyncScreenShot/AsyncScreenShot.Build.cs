@@ -1,4 +1,4 @@
-// Some copyright should be here...
+// Copyright 2023 Grigoryev Daniil. All Rights Reserved.
 
 using UnrealBuildTool;
 
@@ -7,8 +7,17 @@ public class AsyncScreenShot : ModuleRules
 	public AsyncScreenShot(ReadOnlyTargetRules Target) : base(Target)
 	{
 		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
-		
-		PublicIncludePaths.AddRange(
+
+		PublicDefinitions.Add("_WIN32_WINNT_WIN10_TH2");
+        PublicDefinitions.Add("_WIN32_WINNT_WIN10_RS1");
+        PublicDefinitions.Add("_WIN32_WINNT_WIN10_RS2");
+        PublicDefinitions.Add("_WIN32_WINNT_WIN10_RS3");
+        PublicDefinitions.Add("_WIN32_WINNT_WIN10_RS4");
+        PublicDefinitions.Add("_WIN32_WINNT_WIN10_RS5");
+
+
+
+        PublicIncludePaths.AddRange(
 			new string[] {
 				// ... add public include paths required here ...
 			}
