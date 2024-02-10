@@ -3,6 +3,7 @@
 #pragma once
 
 #include "Kismet/BlueprintFunctionLibrary.h"
+#include "Engine/TextureRenderTarget2D.h"
 #include "AsyncScreenShotBPLibrary.generated.h"
 
 /* 
@@ -29,6 +30,9 @@ class UAsyncScreenShotBPLibrary : public UBlueprintFunctionLibrary
 		//When specifying the path, use /, for example C:/Users/Krot9ira/
 	UFUNCTION(BlueprintCallable, meta = (Category = "ScreenshotTaker Functionality"))
 		static void SaveGameScreen(FString PathToSave, FString Name);
+
+	UFUNCTION(BlueprintCallable, meta = (Category = "ScreenshotTaker Functionality"))
+		static void SaveRenderTarget(UTextureRenderTarget2D* RenderTarget,FString PathToSave, FString Name);
 
 	//Returning default path for saving screenshot
 	UFUNCTION(BlueprintPure, meta = (Category = "ScreenshotTaker Functionality"))
