@@ -291,7 +291,7 @@ void UAsyncScreenShotBPLibrary::SaveRenderTarget(UTextureRenderTarget2D* RenderT
     {
         return;
     }
-    
+    AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [RenderTarget, PathToSave, Name]() {
     int32 InSizeX = RenderTarget->SizeX;
     int32 InSizeY = RenderTarget->SizeY;
 
@@ -300,42 +300,37 @@ void UAsyncScreenShotBPLibrary::SaveRenderTarget(UTextureRenderTarget2D* RenderT
         TArray<FFloat16Color> StructDestBuffer;
     };
 
-    
+    TArray<FFloat16Color> PixelArray;
+    int32 sizeOfImage = InSizeX * InSizeY;
+    PixelArray.SetNum(sizeOfImage);
 
-    //using FCommandDataPtr = TSharedPtr<FCopyBufferData, ESPMode::ThreadSafe>;
-   // FCommandDataPtr CommandData = MakeShared<FCopyBufferData, ESPMode::ThreadSafe>();
-    //CommandData->StructDestBuffer.SetNum(InSizeX* InSizeY);
+    using FCommandDataPtr = TSharedPtr<FCopyBufferData, ESPMode::ThreadSafe>;
+    FCommandDataPtr CommandData = MakeShared<FCopyBufferData, ESPMode::ThreadSafe>();
+    CommandData->StructDestBuffer.SetNum(sizeOfImage);
 
-    //auto Future = CommandData->Promise.GetFuture();
+    auto Future = CommandData->Promise.GetFuture();
 
     //CopyTextureToArray(InTexture, PixelArray);
+    ENQUEUE_RENDER_COMMAND(CopyTexture2DToArray)([Data = CommandData, RenderTarget, bFlush = false](FRHICommandListImmediate& RHICmdList)
+        {
     if (RenderTarget && RenderTarget->GetResource() && RenderTarget->GetResource()->TextureRHI.IsValid() && RenderTarget->GetResource()->TextureRHI->GetTexture2D()->IsValid()) {
         UE_LOG(LogTemp, Warning, TEXT("Valid, Starting Read"));
         const uint32 NumBytes = CalculateImageBytes(RenderTarget->SizeX, RenderTarget->SizeY, 0, RenderTarget->GetFormat());
-        /*
-        ENQUEUE_RENDER_COMMAND(CopyTexture2DToArray)(
-            [Data = CommandData, Bytes = NumBytes, LUT = RenderTarget->GetResource()->TextureRHI, bFlush = false](FRHICommandListImmediate& RHICmdList)
-            {
-                uint32 DestStride = 0;
-                FFloat16Color* DestBuffer = static_cast<FFloat16Color*>(RHILockTexture2D(LUT->GetTexture2D(), 0, EResourceLockMode::RLM_ReadOnly, DestStride, false));
 
-                FMemory::Memcpy(Data->StructDestBuffer.GetData(), DestBuffer, Bytes);
+            
+         uint32 DestStride = 0;
+         FFloat16Color* DestBuffer = static_cast<FFloat16Color*>(RHILockTexture2D(RenderTarget->GetResource()->TextureRHI->GetTexture2D(), 0, EResourceLockMode::RLM_ReadOnly, DestStride, false));
 
-                RHIUnlockTexture2D(LUT->GetTexture2D(), 0, false);
-                Data->Promise.SetValue();
+         FMemory::Memcpy(Data->StructDestBuffer.GetData(), DestBuffer, NumBytes);
+
+         RHIUnlockTexture2D(RenderTarget->GetResource()->TextureRHI->GetTexture2D(), 0, false);
+         Data->Promise.SetValue();
+    }
             });
-            */
-    }
-    else {
-        UE_LOG(LogTemp, Warning, TEXT("InValid, Skipped"));
-    }
-   
-    //Future.Get();
-    /*
-    AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [RenderTarget, PathToSave, Name, InSizeX, InSizeY, CommandData]() {
-        TArray<FFloat16Color> PixelArray;
-        int32 sizeOfImage = InSizeX * InSizeY;
-        PixelArray.SetNum(sizeOfImage);
+
+    
+
+    Future.Get();
     PixelArray = std::move(CommandData->StructDestBuffer);
     int32 size = PixelArray.Num();
 
@@ -351,7 +346,7 @@ void UAsyncScreenShotBPLibrary::SaveRenderTarget(UTextureRenderTarget2D* RenderT
         data.push_back(PixelArray[i].GetFloats().ToFColor(true).A);
     }
     stbi_write_png(FolderPath.data(), RenderTarget->SizeX, RenderTarget->SizeY, 4, static_cast<void*>(data.data()), 4 * RenderTarget->SizeX); });
-    */
+    
 }
 
 #endif
