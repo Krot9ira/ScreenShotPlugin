@@ -30,7 +30,7 @@ class UAsyncScreenShotBPLibrary : public UBlueprintFunctionLibrary
 		//When specifying the path, use /, for example C:/Users/Krot9ira/
 	UFUNCTION(BlueprintCallable, meta = (Category = "ScreenshotTaker Functionality"))
 		static void SaveGameScreen(FString PathToSave, FString Name);
-
+		//TODO Add selecting file extention
 	UFUNCTION(BlueprintCallable, meta = (Category = "ScreenshotTaker Functionality"))
 		static void SaveRenderTarget(UTextureRenderTarget2D* RenderTarget,FString PathToSave, FString Name);
 

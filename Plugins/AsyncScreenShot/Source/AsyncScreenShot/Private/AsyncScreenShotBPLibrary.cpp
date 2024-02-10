@@ -287,6 +287,7 @@ void UAsyncScreenShotBPLibrary::SaveGameScreen(FString PathToSave, FString Name)
 
 void UAsyncScreenShotBPLibrary::SaveRenderTarget(UTextureRenderTarget2D* RenderTarget, FString PathToSave, FString Name)
 {
+    
     if (!RenderTarget || RenderTarget->GetTextureFormatForConversionToTexture2D() != ETextureSourceFormat::TSF_RGBA16F)
     {
         return;
