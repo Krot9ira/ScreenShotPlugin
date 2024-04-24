@@ -35,7 +35,7 @@ public class AsyncScreenShot : ModuleRules
 			new string[]
 			{
 				"Core",
-
+                "RHI",
 
 				// ... add other public dependencies that you statically link with here ...
 			}
@@ -50,7 +50,7 @@ public class AsyncScreenShot : ModuleRules
 				"Slate",
 				"SlateCore",
 				"RenderCore",
-                "RHI",
+                
 				// ... add private dependencies that you statically link with here ...	
 			}
 			);

@@ -7,6 +7,8 @@
 #include "EngineGlobals.h"
 #include "Engine/Engine.h"
 #include "RenderUtils.h"
+#include "RenderingThread.h"
+#include "TextureResource.h"
 #include "Widgets/SWindow.h"
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
