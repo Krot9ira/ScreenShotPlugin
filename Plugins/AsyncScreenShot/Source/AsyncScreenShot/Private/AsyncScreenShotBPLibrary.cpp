@@ -287,8 +287,11 @@ void UAsyncScreenShotBPLibrary::SaveGameScreen(FString PathToSave, FString Name)
 
 void UAsyncScreenShotBPLibrary::SaveRenderTarget(UTextureRenderTarget2D* RenderTarget, FString PathToSave, FString Name)
 {
-    
-    if (!RenderTarget || RenderTarget->GetTextureFormatForConversionToTexture2D() != ETextureSourceFormat::TSF_RGBA16F)
+    ETextureSourceFormat OutTextureSourceFormat;
+    EPixelFormat OutPixelFormat;
+    FText* OutErrorMessage = nullptr;
+    bool Can = RenderTarget->CanConvertToTexture(OutTextureSourceFormat, OutPixelFormat, OutErrorMessage);
+    if (!RenderTarget || OutTextureSourceFormat != ETextureSourceFormat::TSF_RGBA16F)
     {
         return;
     }
@@ -344,7 +347,7 @@ void UAsyncScreenShotBPLibrary::SaveRenderTarget(UTextureRenderTarget2D* RenderT
         data.push_back(PixelArray[i].GetFloats().ToFColor(true).R);
         data.push_back(PixelArray[i].GetFloats().ToFColor(true).G);
         data.push_back(PixelArray[i].GetFloats().ToFColor(true).B);
-        data.push_back(PixelArray[i].GetFloats().ToFColor(true).A);
+        data.push_back(255);
     }
     stbi_write_png(FolderPath.data(), RenderTarget->SizeX, RenderTarget->SizeY, 4, static_cast<void*>(data.data()), 4 * RenderTarget->SizeX); });
     

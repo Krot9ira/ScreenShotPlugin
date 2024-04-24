@@ -19,6 +19,9 @@
 			"Name": "AsyncScreenShot",
 			"Type": "Runtime",
 			"LoadingPhase": "PreLoadingScreen",
+			"PlatformAllowList": [
+				"Win64"
+			],
 			"WhitelistPlatforms": [ "Win64" ]
 		}
 	]
