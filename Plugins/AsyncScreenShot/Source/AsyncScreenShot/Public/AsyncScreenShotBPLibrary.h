@@ -23,13 +23,22 @@
 *	For more info on custom blueprint nodes visit documentation:
 *	https://wiki.unrealengine.com/Custom_Blueprint_Node_Creation
 */
+UENUM(BlueprintType)
+enum class EImageFormat : uint8
+{
+	bpm UMETA(DisplayName = "BMP"),
+	jpg UMETA(DisplayName = "JPG")
+};
+
 UCLASS()
 class UAsyncScreenShotBPLibrary : public UBlueprintFunctionLibrary
 {
 	GENERATED_UCLASS_BODY()
-		//When specifying the path, use /, for example C:/Users/Krot9ira/
+		/*When specifying the path, use / , for example C : / Users / Krot9ira /
+		* Quality is used only for jpg in range from 1 to 100
+		*/
 	UFUNCTION(BlueprintCallable, meta = (Category = "ScreenshotTaker Functionality"))
-		static void SaveGameScreen(FString PathToSave, FString Name);
+		static void SaveGameScreen(FString PathToSave, FString Name, EImageFormat ImageFormat, int Quality = 80);
 		//TODO Add selecting file extention
 	UFUNCTION(BlueprintCallable, meta = (Category = "ScreenshotTaker Functionality"))
 		static void SaveRenderTarget(UTextureRenderTarget2D* RenderTarget,FString PathToSave, FString Name);

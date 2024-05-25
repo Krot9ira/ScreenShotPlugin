@@ -52,8 +52,33 @@ using namespace std;
 
 #pragma comment(lib,"gdiplus.lib")
 
+void Bgra2Rgb(const unsigned char* src, int w, int h, int d, unsigned char* dst)
+{
+    unsigned char* pTempDst = dst;
+    for (int i = abs(h)-1; i >= 0; i--)
+    {
+        const unsigned char* pTempSrc = nullptr;
+        if (h > 0)
+        {
+            pTempSrc = src + w * i * d;
+        }
+        else
+        {
+            pTempSrc = src + w * abs(i + h + 1) * d;
+        }
 
-int CaptureAnImage(HWND hWnd, string path)
+        for (int j = 0; j < w; j++)
+        {
+            *(pTempDst) = *(pTempSrc + 2);
+            *(pTempDst + 1) = *(pTempSrc + 1);
+            *(pTempDst + 2) = *(pTempSrc);
+            pTempDst += 3;
+            pTempSrc += d;
+        }
+    }
+}
+
+int CaptureAnImage(HWND hWnd, string path, EImageFormat ImageFormat, int quality)
 {
     HDC hdcScreen;
     HDC hdcWindow;
@@ -115,7 +140,9 @@ int CaptureAnImage(HWND hWnd, string path)
     
 
     // Create a compatible bitmap from the Window DC.
-    hbmScreen = CreateCompatibleBitmap(hdcWindow, rcClient.right - rcClient.left, rcClient.bottom - rcClient.top);
+        long x = rcClient.right - rcClient.left;
+        long y = rcClient.bottom - rcClient.top;
+    hbmScreen = CreateCompatibleBitmap(hdcWindow, x, y);
 
     if (!hbmScreen)
     {
@@ -183,13 +210,16 @@ int CaptureAnImage(HWND hWnd, string path)
     std::wstring stemp = std::wstring(path.begin(), path.end());
     LPCWSTR sw = stemp.c_str();
     // A file is created, this is where we will save the screen capture.
+    if (ImageFormat == EImageFormat::bpm)
+    {
+        hFile = CreateFile(sw,
+            GENERIC_WRITE,
+            0,
+            NULL,
+            CREATE_ALWAYS,
+            FILE_ATTRIBUTE_NORMAL, NULL);
+    }
     
-    hFile = CreateFile(sw,
-        GENERIC_WRITE,
-        0,
-        NULL,
-        CREATE_ALWAYS,
-        FILE_ATTRIBUTE_NORMAL, NULL);
 
     // Add the size of the headers to the size of the bitmap to get the total file size.
     dwSizeofDIB = dwBmpSize + sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
@@ -202,18 +232,34 @@ int CaptureAnImage(HWND hWnd, string path)
 
     // bfType must always be BM for Bitmaps.
     bmfHeader.bfType = 0x4D42; // BM.
-
-    WriteFile(hFile, (LPSTR)&bmfHeader, sizeof(BITMAPFILEHEADER), &dwBytesWritten, NULL);
-    WriteFile(hFile, (LPSTR)&bi, sizeof(BITMAPINFOHEADER), &dwBytesWritten, NULL);
-    WriteFile(hFile, (LPSTR)lpbitmap, dwBmpSize, &dwBytesWritten, NULL);
+    unsigned char* rgb;
+    switch (ImageFormat)
+    {
+    case EImageFormat::bpm:
+        WriteFile(hFile, (LPSTR)&bmfHeader, sizeof(BITMAPFILEHEADER), &dwBytesWritten, NULL);
+        WriteFile(hFile, (LPSTR)&bi, sizeof(BITMAPINFOHEADER), &dwBytesWritten, NULL);
+        WriteFile(hFile, (LPSTR)lpbitmap, dwBmpSize, &dwBytesWritten, NULL);
+        break;
+    case EImageFormat::jpg:
+        rgb = new unsigned char[x * abs(y) * 32 / 8];
+        Bgra2Rgb((unsigned char* )lpbitmap, x, y, 32 / 8, rgb);
+       
+       stbi_write_jpg(path.data(), x, y, 3, rgb, quality);
+        break;
+    default:
+        break;
+    }
+   
 
     // Unlock and Free the DIB from the heap.
     GlobalUnlock(hDIB);
     GlobalFree(hDIB);
 
     // Close the handle for the file that was created.
-    CloseHandle(hFile);
-
+    if (ImageFormat == EImageFormat::bpm)
+    {
+        CloseHandle(hFile);
+    }
     // Clean up.
 
     DeleteObject(hbmScreen);
@@ -227,7 +273,7 @@ int CaptureAnImage(HWND hWnd, string path)
 
 
 
-void UAsyncScreenShotBPLibrary::SaveGameScreen(FString PathToSave, FString Name)
+void UAsyncScreenShotBPLibrary::SaveGameScreen(FString PathToSave, FString Name, EImageFormat ImageFormat, int Quality)
 {
    
     if (Name == "")
@@ -236,12 +282,23 @@ void UAsyncScreenShotBPLibrary::SaveGameScreen(FString PathToSave, FString Name)
     }
     
     
-    AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [PathToSave, Name] {
+    AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [PathToSave, Name, ImageFormat, Quality] {
         GdiplusStartupInput GDIplusStartupInput;
         ULONG_PTR GDIplusToken;
         GdiplusStartup(&GDIplusToken, &GDIplusStartupInput, NULL);
-
-        FString FullPath = PathToSave  + Name + FString(".bmp");
+        FString FormatEnd;
+        switch (ImageFormat)
+        {
+        case EImageFormat::bpm:
+            FormatEnd = ".bmp";
+            break;
+        case EImageFormat::jpg:
+            FormatEnd = ".jpg";
+            break;
+        default:
+            break;
+        }
+        FString FullPath = PathToSave  + Name + FormatEnd;
         string FolderPath = std::string(TCHAR_TO_UTF8(*PathToSave));
         FolderPath.pop_back();
         std::wstring stemp = std::wstring(FolderPath.begin(), FolderPath.end());
@@ -250,8 +307,12 @@ void UAsyncScreenShotBPLibrary::SaveGameScreen(FString PathToSave, FString Name)
         HWND hWnd = static_cast<HWND>(GEngine->GameViewport->GetWindow()->GetNativeWindow()->GetOSWindowHandle());
 
         //If folder not exist image will not save, so i make folder to be sure
-        filesystem::create_directories(FolderPath);
-        CaptureAnImage(hWnd, std::string(TCHAR_TO_UTF8(*FullPath)));
+        if (ImageFormat == EImageFormat::bpm)
+        {
+            filesystem::create_directories(FolderPath);
+        }
+        
+        CaptureAnImage(hWnd, std::string(TCHAR_TO_UTF8(*FullPath)), ImageFormat, Quality);
         // save as png to memory 
        
 
