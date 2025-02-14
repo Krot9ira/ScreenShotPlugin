@@ -39,7 +39,7 @@ class UTextureRenderTarget2D;
 struct FAsyncReadEntireRTData
 {
 	FGPUFenceRHIRef TextureFence;
-	FTexture2DRHIRef Texture;
+	FTextureRHIRef Texture;
 	TAtomic<bool> FinishedRead;
 	bool StartReading = false;
 	TArray<FColor> PixelColors;

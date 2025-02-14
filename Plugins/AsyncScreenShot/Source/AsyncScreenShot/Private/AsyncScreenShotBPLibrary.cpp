@@ -10,6 +10,8 @@
 #include "RenderingThread.h"
 #include "TextureResource.h"
 #include "Widgets/SWindow.h"
+#include "Runtime/Launch/Resources/Version.h"
+#include "TimerManager.h"
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 #include "Engine/GameViewportClient.h"
@@ -375,7 +377,7 @@ void PollRTRead(FRHICommandListImmediate& RHICmdList, TSharedPtr<FAsyncReadEntir
     }
     else
     {
-#if ENGINE_MAJOR_VERSION >= 5 && ENGINE_MINOR_VERSION >= 2
+#if (ENGINE_MAJOR_VERSION >= 5 && ENGINE_MINOR_VERSION >= 2)
         GDynamicRHI->RHIMapStagingSurface_RenderThread(RHICmdList, ReadData->Texture, INDEX_NONE, ReadData->TextureFence, OutputBuffer, RowPitchInPixels, Height);
 #else
         GDynamicRHI->RHIMapStagingSurface_RenderThread(RHICmdList, ReadData->Texture, ReadData->TextureFence, OutputBuffer, RowPitchInPixels, Height);
@@ -448,7 +450,7 @@ UAsyncScreenshotRTAction* UAsyncScreenshotRTAction::SaveRenderTarget(UObject* Wo
 
 }
 
-void WritePixelsToFile(FTexture2DRHIRef RenderTarget, FString PathToSave, FString Name, TArray<FColor>& PixelToCopy, TWeakObjectPtr<UAsyncScreenshotRTAction> Action)
+void WritePixelsToFile(FTextureRHIRef RenderTarget, FString PathToSave, FString Name, TArray<FColor>& PixelToCopy, TWeakObjectPtr<UAsyncScreenshotRTAction> Action)
 {
 
     AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [Action, RenderTarget, PathToSave, Name, &PixelToCopy]() {
@@ -540,7 +542,7 @@ void UAsyncScreenshotRTAction::Activate()
 
             SCOPED_NAMED_EVENT_TEXT("AsyncScreenshot::AsyncReadRT", FColor::Magenta);
 
-            FTexture2DRHIRef IORHITextureCPU;
+            FTextureRHIRef IORHITextureCPU;
             {
                 SCOPED_NAMED_EVENT_TEXT("AsyncScreenshot::AsyncReadRT::CreateCopyTexture", FColor::Magenta);
 
