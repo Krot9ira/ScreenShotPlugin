@@ -88,7 +88,6 @@ int CaptureAnImage(HWND hWnd, const std::string& path, EImageFormat ImageFormat,
 {
     if (!hWnd) return 0;
 
-    // Получаем размеры клиентской области
     RECT rcClient;
     GetClientRect(hWnd, &rcClient);
     int width_px = rcClient.right - rcClient.left;
@@ -103,7 +102,6 @@ int CaptureAnImage(HWND hWnd, const std::string& path, EImageFormat ImageFormat,
 
     SelectObject(hdcMemDC, hbmScreen);
 
-    // Используем PrintWindow с PW_RENDERFULLCONTENT
     if (!PrintWindow(hWnd, hdcMemDC, PW_RENDERFULLCONTENT))
     {
         DeleteObject(hbmScreen);
@@ -200,15 +198,8 @@ void UAsyncScreenShotBPLibrary::SaveGameScreen(FString PathToSave, FString Name,
         // get the bitmap handle to the bitmap screenshot
         HWND hWnd = static_cast<HWND>(GEngine->GameViewport->GetWindow()->GetNativeWindow()->GetOSWindowHandle());
 
-        //If folder not exist image will not save, so i make folder to be sure
-        try
-        {
-            fs::create_directories(FolderPath);
-        }
-        catch (const std::exception& e)
-        {
-            UE_LOG(LogTemp, Warning, TEXT("Failed to create directory: %s, reason: %s"), *FString(FolderPath.c_str()), *FString(e.what()));
-        }
+
+        fs::create_directories(FolderPath);
 
         CaptureAnImage(hWnd, std::string(TCHAR_TO_UTF8(*FullPath)), ImageFormat, Quality);
         // save as png to memory 
