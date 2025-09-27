@@ -7,6 +7,7 @@
 #include "EngineGlobals.h"
 #include "Engine/Engine.h"
 #include "RenderUtils.h"
+#include "GameFramework/GameUserSettings.h"
 #include "RenderingThread.h"
 #include "TextureResource.h"
 #include "Widgets/SWindow.h"
@@ -36,7 +37,9 @@ THIRD_PARTY_INCLUDES_END
 #include <stdio.h>
 #include <fstream>
 #include <iostream>
-
+#ifndef PW_RENDERFULLCONTENT
+#define PW_RENDERFULLCONTENT 0x00000002
+#endif
 /*
 #if __cplusplus < 201703L // If the version of C++ is less than 17
 #include <experimental/filesystem>
@@ -53,6 +56,7 @@ using namespace Gdiplus;
 using namespace std;
 
 #pragma comment(lib,"gdiplus.lib")
+
 
 void Bgra2Rgb(const unsigned char* src, int w, int h, int d, unsigned char* dst)
 {
@@ -80,197 +84,85 @@ void Bgra2Rgb(const unsigned char* src, int w, int h, int d, unsigned char* dst)
     }
 }
 
-int CaptureAnImage(HWND hWnd, string path, EImageFormat ImageFormat, int quality)
+int CaptureAnImage(HWND hWnd, const std::string& path, EImageFormat ImageFormat, int quality)
 {
-    HDC hdcScreen;
-    HDC hdcWindow;
-    HDC hdcMemDC = NULL;
-    HBITMAP hbmScreen = NULL;
-    BITMAP bmpScreen;
-    DWORD dwBytesWritten = 0;
-    DWORD dwSizeofDIB = 0;
-    HANDLE hFile = NULL;
-    char* lpbitmap = NULL;
-    HANDLE hDIB = NULL;
-    DWORD dwBmpSize = 0;
+    if (!hWnd) return 0;
 
-    // Retrieve the handle to a display device context for the client 
-    // area of the window. 
-    hdcScreen = GetDC(0);
-    hdcWindow = GetDC(hWnd);
-
-    // Create a compatible DC, which is used in a BitBlt from the window DC.
-    hdcMemDC = CreateCompatibleDC(hdcWindow);
-
-    if (!hdcMemDC)
-    {
-        MessageBox(hWnd, L"CreateCompatibleDC has failed", L"Failed", MB_OK);
-        DeleteObject(hbmScreen);
-        DeleteObject(hdcMemDC);
-        ReleaseDC(NULL, hdcScreen);
-        ReleaseDC(hWnd, hdcWindow);
-
-        return 0;
-    }
-
-    // Get the client area for size calculation.
+    // Получаем размеры клиентской области
     RECT rcClient;
-    RECT rcWindow;
     GetClientRect(hWnd, &rcClient);
-    GetWindowRect(hWnd, &rcWindow);
-    // This is the best stretch mode.
-    SetStretchBltMode(hdcWindow, COLORONCOLOR);
-    // TakeAllScreen
-    if (!StretchBlt(hdcWindow,
-        0, 0,
-        rcClient.right, rcClient.bottom,
-        hdcScreen,
-        rcWindow.left, rcWindow.top,
-        rcClient.right, rcClient.bottom,
-        SRCCOPY))
-    {
-        MessageBox(hWnd, L"StretchBlt has failed", L"Failed", MB_OK);
-        DeleteObject(hbmScreen);
-        DeleteObject(hdcMemDC);
-        ReleaseDC(NULL, hdcScreen);
-        ReleaseDC(hWnd, hdcWindow);
+    int width_px = rcClient.right - rcClient.left;
+    int height_px = rcClient.bottom - rcClient.top;
 
-        return 0;
-    }
+    HDC hdcWindow = GetDC(hWnd);
+    HDC hdcMemDC = CreateCompatibleDC(hdcWindow);
+    if (!hdcMemDC) { ReleaseDC(hWnd, hdcWindow); return 0; }
 
+    HBITMAP hbmScreen = CreateCompatibleBitmap(hdcWindow, width_px, height_px);
+    if (!hbmScreen) { DeleteDC(hdcMemDC); ReleaseDC(hWnd, hdcWindow); return 0; }
 
-
-
-    // Create a compatible bitmap from the Window DC.
-    long x = rcClient.right - rcClient.left;
-    long y = rcClient.bottom - rcClient.top;
-    hbmScreen = CreateCompatibleBitmap(hdcWindow, x, y);
-
-    if (!hbmScreen)
-    {
-        MessageBox(hWnd, L"CreateCompatibleBitmap Failed", L"Failed", MB_OK);
-        DeleteObject(hbmScreen);
-        DeleteObject(hdcMemDC);
-        ReleaseDC(NULL, hdcScreen);
-        ReleaseDC(hWnd, hdcWindow);
-
-        return 0;
-    }
-
-    // Select the compatible bitmap into the compatible memory DC.
     SelectObject(hdcMemDC, hbmScreen);
 
-    // Bit block transfer into our compatible memory DC.
-    if (!BitBlt(hdcMemDC,
-        0, 0,
-        rcClient.right - rcClient.left, rcClient.bottom - rcClient.top,
-        hdcWindow,
-        0, 0,
-        SRCCOPY))
+    // Используем PrintWindow с PW_RENDERFULLCONTENT
+    if (!PrintWindow(hWnd, hdcMemDC, PW_RENDERFULLCONTENT))
     {
-        MessageBox(hWnd, L"BitBlt has failed", L"Failed", MB_OK);
         DeleteObject(hbmScreen);
-        DeleteObject(hdcMemDC);
-        ReleaseDC(NULL, hdcScreen);
+        DeleteDC(hdcMemDC);
         ReleaseDC(hWnd, hdcWindow);
-
         return 0;
     }
 
-    // Get the BITMAP from the HBITMAP.
+    BITMAP bmpScreen;
     GetObject(hbmScreen, sizeof(BITMAP), &bmpScreen);
 
-    BITMAPFILEHEADER   bmfHeader;
-    BITMAPINFOHEADER   bi;
+    DWORD dwBmpSize = ((bmpScreen.bmWidth * 32 + 31) / 32) * 4 * bmpScreen.bmHeight;
+    HANDLE hDIB = GlobalAlloc(GHND, dwBmpSize);
+    char* lpbitmap = (char*)GlobalLock(hDIB);
 
+    BITMAPINFOHEADER bi = {};
     bi.biSize = sizeof(BITMAPINFOHEADER);
     bi.biWidth = bmpScreen.bmWidth;
     bi.biHeight = bmpScreen.bmHeight;
     bi.biPlanes = 1;
     bi.biBitCount = 32;
     bi.biCompression = BI_RGB;
-    bi.biSizeImage = 0;
-    bi.biXPelsPerMeter = 0;
-    bi.biYPelsPerMeter = 0;
-    bi.biClrUsed = 0;
-    bi.biClrImportant = 0;
 
-    dwBmpSize = ((bmpScreen.bmWidth * bi.biBitCount + 31) / 32) * 4 * bmpScreen.bmHeight;
+    GetDIBits(hdcMemDC, hbmScreen, 0, bmpScreen.bmHeight, lpbitmap, (BITMAPINFO*)&bi, DIB_RGB_COLORS);
 
-    // Starting with 32-bit Windows, GlobalAlloc and LocalAlloc are implemented as wrapper functions that 
-    // call HeapAlloc using a handle to the process's default heap. Therefore, GlobalAlloc and LocalAlloc 
-    // have greater overhead than HeapAlloc.
-    hDIB = GlobalAlloc(GHND, dwBmpSize);
-    lpbitmap = (char*)GlobalLock(hDIB);
-
-    // Gets the "bits" from the bitmap, and copies them into a buffer 
-    // that's pointed to by lpbitmap.
-    GetDIBits(hdcWindow, hbmScreen, 0,
-        (UINT)bmpScreen.bmHeight,
-        lpbitmap,
-        (BITMAPINFO*)&bi, DIB_RGB_COLORS);
-    std::wstring stemp = std::wstring(path.begin(), path.end());
-    LPCWSTR sw = stemp.c_str();
-    // A file is created, this is where we will save the screen capture.
-    if (ImageFormat == EImageFormat::bpm)
+    if (ImageFormat == EImageFormat::jpg)
     {
-        hFile = CreateFile(sw,
-            GENERIC_WRITE,
-            0,
-            NULL,
-            CREATE_ALWAYS,
-            FILE_ATTRIBUTE_NORMAL, NULL);
+        unsigned char* rgb = new unsigned char[width_px * height_px * 3];
+        Bgra2Rgb((unsigned char*)lpbitmap, width_px, height_px, 4, rgb);
+        stbi_write_jpg(path.c_str(), width_px, height_px, 3, rgb, quality);
+        delete[] rgb;
+    }
+    else if (ImageFormat == EImageFormat::bpm)
+    {
+        BITMAPFILEHEADER bmfHeader = {};
+        bmfHeader.bfType = 0x4D42;
+        bmfHeader.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
+        bmfHeader.bfSize = dwBmpSize + bmfHeader.bfOffBits;
+
+        HANDLE hFile = CreateFile(std::wstring(path.begin(), path.end()).c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (hFile)
+        {
+            DWORD dwBytesWritten;
+            WriteFile(hFile, &bmfHeader, sizeof(BITMAPFILEHEADER), &dwBytesWritten, NULL);
+            WriteFile(hFile, &bi, sizeof(BITMAPINFOHEADER), &dwBytesWritten, NULL);
+            WriteFile(hFile, lpbitmap, dwBmpSize, &dwBytesWritten, NULL);
+            CloseHandle(hFile);
+        }
     }
 
-
-    // Add the size of the headers to the size of the bitmap to get the total file size.
-    dwSizeofDIB = dwBmpSize + sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
-
-    // Offset to where the actual bitmap bits start.
-    bmfHeader.bfOffBits = (DWORD)sizeof(BITMAPFILEHEADER) + (DWORD)sizeof(BITMAPINFOHEADER);
-
-    // Size of the file.
-    bmfHeader.bfSize = dwSizeofDIB;
-
-    // bfType must always be BM for Bitmaps.
-    bmfHeader.bfType = 0x4D42; // BM.
-    unsigned char* rgb;
-    switch (ImageFormat)
-    {
-    case EImageFormat::bpm:
-        WriteFile(hFile, (LPSTR)&bmfHeader, sizeof(BITMAPFILEHEADER), &dwBytesWritten, NULL);
-        WriteFile(hFile, (LPSTR)&bi, sizeof(BITMAPINFOHEADER), &dwBytesWritten, NULL);
-        WriteFile(hFile, (LPSTR)lpbitmap, dwBmpSize, &dwBytesWritten, NULL);
-        break;
-    case EImageFormat::jpg:
-        rgb = new unsigned char[x * abs(y) * 32 / 8];
-        Bgra2Rgb((unsigned char*)lpbitmap, x, y, 32 / 8, rgb);
-
-        stbi_write_jpg(path.data(), x, y, 3, rgb, quality);
-        break;
-    default:
-        break;
-    }
-
-
-    // Unlock and Free the DIB from the heap.
     GlobalUnlock(hDIB);
     GlobalFree(hDIB);
-
-    // Close the handle for the file that was created.
-    if (ImageFormat == EImageFormat::bpm)
-    {
-        CloseHandle(hFile);
-    }
-    // Clean up.
-
     DeleteObject(hbmScreen);
-    DeleteObject(hdcMemDC);
-    ReleaseDC(NULL, hdcScreen);
+    DeleteDC(hdcMemDC);
     ReleaseDC(hWnd, hdcWindow);
 
-    return 0;
+    return 1;
 }
+
 
 
 
@@ -309,9 +201,13 @@ void UAsyncScreenShotBPLibrary::SaveGameScreen(FString PathToSave, FString Name,
         HWND hWnd = static_cast<HWND>(GEngine->GameViewport->GetWindow()->GetNativeWindow()->GetOSWindowHandle());
 
         //If folder not exist image will not save, so i make folder to be sure
-        if (ImageFormat == EImageFormat::bpm)
+        try
         {
-            filesystem::create_directories(FolderPath);
+            fs::create_directories(FolderPath);
+        }
+        catch (const std::exception& e)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("Failed to create directory: %s, reason: %s"), *FString(FolderPath.c_str()), *FString(e.what()));
         }
 
         CaptureAnImage(hWnd, std::string(TCHAR_TO_UTF8(*FullPath)), ImageFormat, Quality);
@@ -392,9 +288,19 @@ void PollRTRead(FRHICommandListImmediate& RHICmdList, TSharedPtr<FAsyncReadEntir
     ReadData->PixelColors.Empty(Width * Height);
     ReadData->PixelColors.SetNum(Width * Height);
     const EPixelFormat Format = ReadData->Texture->GetFormat();
+
     if (Format == EPixelFormat::PF_B8G8R8A8)
     {
-        FMemory::Memmove(ReadData->PixelColors.GetData(), OutputBuffer, NumBytes);
+        const int32 BytesPerPixel = GPixelFormats[Format].BlockBytes; // = 4 для B8G8R8A8
+        uint8* Src = static_cast<uint8*>(OutputBuffer);
+        FColor* Dst = ReadData->PixelColors.GetData();
+
+        for (int32 Y = 0; Y < Height; Y++)
+        {
+            // Смещение в байтах с учётом pitch
+            uint8* RowSrc = Src + Y * RowPitchInPixels * BytesPerPixel;
+            FMemory::Memcpy(Dst + Y * Width, RowSrc, Width * BytesPerPixel);
+        }
     }
     /*
     for (int32 YIndex = 0; YIndex < Height; YIndex++)
@@ -478,6 +384,7 @@ void WritePixelsToFile(FTextureRHIRef RenderTarget, FString PathToSave, FString 
             data.push_back(PixelArray[i].B);
             data.push_back(255);
         }
+        fs::create_directories(fs::path(FolderPath).parent_path());
         stbi_write_png(FolderPath.data(), InSizeX, InSizeY, 4, static_cast<void*>(data.data()), 4 * InSizeX);
 
         AsyncTask(ENamedThreads::GameThread, [Action]() {
