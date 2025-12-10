@@ -452,7 +452,8 @@ void UAsyncScreenshotRTAction::Activate()
                 TextureDesc.AddFlags(ETextureCreateFlags::CPUReadback);
                 TextureDesc.InitialState = ERHIAccess::CopyDest;
 #if ENGINE_MINOR_VERSION > 3
-                IORHITextureCPU = GDynamicRHI->RHICreateTexture(FRHICommandListExecutor::GetImmediateCommandList(), TextureDesc);
+                IORHITextureCPU = RHICmdList.CreateTexture(TextureDesc);
+                
 #else // ENGINE_MINOR_VERSION
                 IORHITextureCPU = GDynamicRHI->RHICreateTexture(TextureDesc);
 #endif // ENGINE_MINOR_VERSION
