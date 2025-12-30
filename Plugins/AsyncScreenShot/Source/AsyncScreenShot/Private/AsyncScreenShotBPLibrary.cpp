@@ -347,6 +347,23 @@ UAsyncScreenshotRTAction* UAsyncScreenshotRTAction::SaveRenderTarget(UObject* Wo
 
 }
 
+UAsyncScreenshotRTAction* UAsyncScreenshotRTAction::SaveRenderTargetsMultiplyAlpha(UObject* WorldContextObject, UTextureRenderTarget2D* ColorRT, UTextureRenderTarget2D* AlphaRT, FString PathToSave, FString Name, bool bFlushRHI)
+{
+    UAsyncScreenshotRTAction* Node = NewObject<UAsyncScreenshotRTAction>();
+    Node->WorldContextObject = WorldContextObject;
+    Node->RT = ColorRT;
+    Node->AlphaRT = AlphaRT;
+    Node->CombineMode = EAsyncRTCombineMode::MultiplyAlpha;
+    Node->bFlushRHI = bFlushRHI;
+    Node->SavedPathToSave = PathToSave;
+    Node->SavedName = Name;
+    Node->CombinedData = MakeShared<FAsyncReadCombinedRTData, ESPMode::ThreadSafe>();
+    Node->CombinedData->ColorRT = MakeShared<FAsyncReadEntireRTData, ESPMode::ThreadSafe>();
+    Node->CombinedData->AlphaRT = MakeShared<FAsyncReadEntireRTData, ESPMode::ThreadSafe>();
+    Node->CombinedData->Mode = Node->CombineMode;
+    return Node;
+}
+
 void WritePixelsToFile(FTextureRHIRef RenderTarget, FString PathToSave, FString Name, TArray<FColor>& PixelToCopy, TWeakObjectPtr<UAsyncScreenshotRTAction> Action)
 {
 
@@ -373,7 +390,7 @@ void WritePixelsToFile(FTextureRHIRef RenderTarget, FString PathToSave, FString 
             data.push_back(PixelArray[i].R);
             data.push_back(PixelArray[i].G);
             data.push_back(PixelArray[i].B);
-            data.push_back(255);
+            data.push_back(PixelArray[i].A);
         }
         fs::create_directories(fs::path(FolderPath).parent_path());
         stbi_write_png(FolderPath.data(), InSizeX, InSizeY, 4, static_cast<void*>(data.data()), 4 * InSizeX);
@@ -397,24 +414,66 @@ FString UAsyncScreenShotBPLibrary::GetScreenshotSavePath()
 void UAsyncScreenshotRTAction::OnNextFrame()
 {
     check(IsInGameThread());
-    check(ReadRTData.IsValid());
 
-    if (ReadRTData->FinishedRead)
+    switch (CombineMode)
     {
-        WritePixelsToFile(ReadRTData->Texture, SavedPathToSave, SavedName, ReadRTData->PixelColors, this);
+    case EAsyncRTCombineMode::SingleRT:
+    {
+
+        check(ReadRTData.IsValid());
+
+        if (ReadRTData->FinishedRead)
+        {
+            WritePixelsToFile(ReadRTData->Texture, SavedPathToSave, SavedName, ReadRTData->PixelColors, this);
+            return;
+        }
+        else
+        {
+            ENQUEUE_RENDER_COMMAND(FReadRTAsync)([WeakThis = TWeakObjectPtr<UAsyncScreenshotRTAction>(this), ReadRTData = ReadRTData](FRHICommandListImmediate& RHICmdList)
+                {
+                    PollRTRead(RHICmdList, ReadRTData, WeakThis, false);
+                });
+
+
+
+            WorldContextObject->GetWorld()->GetTimerManager().SetTimerForNextTick(this, &UAsyncScreenshotRTAction::OnNextFrame);
+        }
+        break;
+    }
+    case EAsyncRTCombineMode::MultiplyAlpha:
+    {
+        if (!CombinedData->ColorRT->FinishedRead || !CombinedData->AlphaRT->FinishedRead)
+        {
+            ENQUEUE_RENDER_COMMAND(PollRTs)(
+                [ColorData = CombinedData->ColorRT,
+                AlphaData = CombinedData->AlphaRT,
+                bFlushRHI = bFlushRHI,
+                WeakThis = TWeakObjectPtr<UAsyncScreenshotRTAction>(this)]
+                (FRHICommandListImmediate& RHICmdList)
+                {
+                    PollRTRead(RHICmdList, ColorData, WeakThis, bFlushRHI);
+                    PollRTRead(RHICmdList, AlphaData, WeakThis, bFlushRHI);
+                });
+            WorldContextObject->GetWorld()->GetTimerManager().SetTimerForNextTick(this, &UAsyncScreenshotRTAction::OnNextFrame);
+            return;
+        }
+
+        TArray<FColor>& Color = CombinedData->ColorRT->PixelColors;
+        TArray<FColor>& Alpha = CombinedData->AlphaRT->PixelColors;
+
+        for (int32 i = 0; i < Color.Num(); ++i)
+        {
+            uint8 A1 = Color[i].A / 255;
+            uint8 A2 = (255 - Alpha[i].A) / 255;
+            Color[i].A = uint8(FMath::Clamp(A1 * A2, 0.f, 1.f) * 255);
+        }
+
+        WritePixelsToFile(CombinedData->ColorRT->Texture, SavedPathToSave, SavedName, Color, this);
         return;
+        break;
     }
-    else
-    {
-        ENQUEUE_RENDER_COMMAND(FReadRTAsync)([WeakThis = TWeakObjectPtr<UAsyncScreenshotRTAction>(this), ReadRTData = ReadRTData](FRHICommandListImmediate& RHICmdList)
-            {
-                PollRTRead(RHICmdList, ReadRTData, WeakThis, false);
-            });
-
-
-
-        WorldContextObject->GetWorld()->GetTimerManager().SetTimerForNextTick(this, &UAsyncScreenshotRTAction::OnNextFrame);
     }
+    
 }
 #if !PLATFORM_WINDOWS
 void UAsyncScreenShotBPLibrary::SaveGameScreen(FString PathToSave, FString Name)
@@ -424,68 +483,113 @@ void UAsyncScreenShotBPLibrary::SaveGameScreen(FString PathToSave, FString Name)
 
 void UAsyncScreenshotRTAction::Activate()
 {
+    switch (CombineMode)
+    {
+    case EAsyncRTCombineMode::SingleRT:
+    {
+        FTextureRenderTarget2DResource* TextureResource = (FTextureRenderTarget2DResource*)RT->GetResource();
+        check(TextureResource);
+        check(TextureResource->GetRenderTargetTexture());
 
-    FTextureRenderTarget2DResource* TextureResource = (FTextureRenderTarget2DResource*)RT->GetResource();
-    check(TextureResource);
-    check(TextureResource->GetRenderTargetTexture());
+        StartFrame = GFrameCounter;
 
-    StartFrame = GFrameCounter;
-
-    ENQUEUE_RENDER_COMMAND(FCopyRTAsync)([bFlushRHI = bFlushRHI, AsyncReadPtr = TWeakObjectPtr<UAsyncScreenshotRTAction>(this), TextureRHI = TextureResource->GetRenderTargetTexture(), ReadData = ReadRTData](FRHICommandListImmediate& RHICmdList)
-        {
-            check(IsInRenderingThread());
-            check(TextureRHI.IsValid());
-
-            FGPUFenceRHIRef Fence = RHICreateGPUFence(TEXT("AsyncScreenshotRTReadback"));
-
-            SCOPED_NAMED_EVENT_TEXT("AsyncScreenshot::AsyncReadRT", FColor::Magenta);
-
-            FTextureRHIRef IORHITextureCPU;
+        ENQUEUE_RENDER_COMMAND(FCopyRTAsync)([bFlushRHI = bFlushRHI, AsyncReadPtr = TWeakObjectPtr<UAsyncScreenshotRTAction>(this), TextureRHI = TextureResource->GetRenderTargetTexture(), ReadData = ReadRTData](FRHICommandListImmediate& RHICmdList)
             {
-                SCOPED_NAMED_EVENT_TEXT("AsyncScreenshot::AsyncReadRT::CreateCopyTexture", FColor::Magenta);
+                check(IsInRenderingThread());
+                check(TextureRHI.IsValid());
 
-                int32 Width, Height;
-                Width = TextureRHI->GetSizeX();
-                Height = TextureRHI->GetSizeY();
+                FGPUFenceRHIRef Fence = RHICreateGPUFence(TEXT("AsyncScreenshotRTReadback"));
+
+                SCOPED_NAMED_EVENT_TEXT("AsyncScreenshot::AsyncReadRT", FColor::Magenta);
+
+                FTextureRHIRef IORHITextureCPU;
+                {
+                    SCOPED_NAMED_EVENT_TEXT("AsyncScreenshot::AsyncReadRT::CreateCopyTexture", FColor::Magenta);
+
+                    int32 Width, Height;
+                    Width = TextureRHI->GetSizeX();
+                    Height = TextureRHI->GetSizeY();
 #if ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION > 2
-                FRHITextureCreateDesc TextureDesc = FRHITextureCreateDesc::Create2D(TEXT("AsyncScreenshotRTReadback"), Width, Height, TextureRHI->GetFormat());
-                TextureDesc.AddFlags(ETextureCreateFlags::CPUReadback);
-                TextureDesc.InitialState = ERHIAccess::CopyDest;
+                    FRHITextureCreateDesc TextureDesc = FRHITextureCreateDesc::Create2D(TEXT("AsyncScreenshotRTReadback"), Width, Height, TextureRHI->GetFormat());
+                    TextureDesc.AddFlags(ETextureCreateFlags::CPUReadback);
+                    TextureDesc.InitialState = ERHIAccess::CopyDest;
 #if ENGINE_MINOR_VERSION > 3
-                IORHITextureCPU = RHICmdList.CreateTexture(TextureDesc);
-                
+                    IORHITextureCPU = RHICmdList.CreateTexture(TextureDesc);
+
 #else // ENGINE_MINOR_VERSION
-                IORHITextureCPU = GDynamicRHI->RHICreateTexture(TextureDesc);
+                    IORHITextureCPU = GDynamicRHI->RHICreateTexture(TextureDesc);
 #endif // ENGINE_MINOR_VERSION
 #else
-                FRHIResourceCreateInfo CreateInfo(TEXT("AsyncRTReadback"));
-                IORHITextureCPU = RHICreateTexture2D(Width, Height, TextureRHI->GetFormat(), 1, 1, TexCreate_CPUReadback, ERHIAccess::CopyDest, CreateInfo);
+                    FRHIResourceCreateInfo CreateInfo(TEXT("AsyncRTReadback"));
+                    IORHITextureCPU = RHICreateTexture2D(Width, Height, TextureRHI->GetFormat(), 1, 1, TexCreate_CPUReadback, ERHIAccess::CopyDest, CreateInfo);
 #endif
 
-                FRHICopyTextureInfo CopyTextureInfo;
-                CopyTextureInfo.Size = FIntVector(Width, Height, 1);
-                CopyTextureInfo.SourceMipIndex = 0;
-                CopyTextureInfo.DestMipIndex = 0;
-                CopyTextureInfo.SourcePosition = FIntVector(0, 0, 0);
-                CopyTextureInfo.DestPosition = FIntVector(0, 0, 0);
+                    FRHICopyTextureInfo CopyTextureInfo;
+                    CopyTextureInfo.Size = FIntVector(Width, Height, 1);
+                    CopyTextureInfo.SourceMipIndex = 0;
+                    CopyTextureInfo.DestMipIndex = 0;
+                    CopyTextureInfo.SourcePosition = FIntVector(0, 0, 0);
+                    CopyTextureInfo.DestPosition = FIntVector(0, 0, 0);
 
-                RHICmdList.Transition(FRHITransitionInfo(TextureRHI, ERHIAccess::Unknown, ERHIAccess::CopySrc));
-                RHICmdList.CopyTexture(TextureRHI, IORHITextureCPU, CopyTextureInfo);
+                    RHICmdList.Transition(FRHITransitionInfo(TextureRHI, ERHIAccess::Unknown, ERHIAccess::CopySrc));
+                    RHICmdList.CopyTexture(TextureRHI, IORHITextureCPU, CopyTextureInfo);
 
-                RHICmdList.Transition(FRHITransitionInfo(IORHITextureCPU, ERHIAccess::CopyDest, ERHIAccess::CopySrc));
-                RHICmdList.WriteGPUFence(Fence);
-            }
-            check(Fence.IsValid());
+                    RHICmdList.Transition(FRHITransitionInfo(IORHITextureCPU, ERHIAccess::CopyDest, ERHIAccess::CopySrc));
+                    RHICmdList.WriteGPUFence(Fence);
+                }
+                check(Fence.IsValid());
 
-            ReadData->Texture = IORHITextureCPU;
-            ReadData->TextureFence = Fence;
+                ReadData->Texture = IORHITextureCPU;
+                ReadData->TextureFence = Fence;
 
-            // If we flush the RHI then we can just go ahead and read the mapped texture asap
-            if (bFlushRHI)
+                // If we flush the RHI then we can just go ahead and read the mapped texture asap
+                if (bFlushRHI)
+                {
+                    PollRTRead(RHICmdList, ReadData, AsyncReadPtr, bFlushRHI);
+                }
+            });
+
+        WorldContextObject->GetWorld()->GetTimerManager().SetTimerForNextTick(this, &UAsyncScreenshotRTAction::OnNextFrame);
+        break;
+    }
+    case EAsyncRTCombineMode::MultiplyAlpha:
+    {
+        auto EnqueueRead = [&](UTextureRenderTarget2D* Target, TSharedPtr<FAsyncReadEntireRTData> Data)
             {
-                PollRTRead(RHICmdList, ReadData, AsyncReadPtr, bFlushRHI);
-            }
-        });
+                FTextureRenderTarget2DResource* Res = static_cast<FTextureRenderTarget2DResource*>(Target->GetResource());
 
-    WorldContextObject->GetWorld()->GetTimerManager().SetTimerForNextTick(this, &UAsyncScreenshotRTAction::OnNextFrame);
+                ENQUEUE_RENDER_COMMAND(ReadRT)(
+                    [Res, Data, bFlushRHI = bFlushRHI](FRHICommandListImmediate& RHICmdList)
+                    {
+                        FGPUFenceRHIRef Fence = RHICreateGPUFence(TEXT("RTReadFence"));
+                        FTextureRHIRef Src = Res->GetRenderTargetTexture();
+                        int32 W = Src->GetSizeX();
+                        int32 H = Src->GetSizeY();
+
+                        FRHITextureCreateDesc Desc = FRHITextureCreateDesc::Create2D(TEXT("RT_CPU"), W, H, Src->GetFormat());
+                        Desc.AddFlags(ETextureCreateFlags::CPUReadback);
+                        FTextureRHIRef CPUTexture = RHICmdList.CreateTexture(Desc);
+
+                        RHICmdList.CopyTexture(Src, CPUTexture, {});
+                        RHICmdList.WriteGPUFence(Fence);
+
+                        Data->Texture = CPUTexture;
+                        Data->TextureFence = Fence;
+
+                        if (bFlushRHI)
+                        {
+                            PollRTRead(RHICmdList, Data, nullptr, true);
+                        }
+                    });
+            };
+
+        EnqueueRead(RT, CombinedData->ColorRT);
+        EnqueueRead(AlphaRT, CombinedData->AlphaRT);
+
+        WorldContextObject->GetWorld()->GetTimerManager().SetTimerForNextTick(this, &UAsyncScreenshotRTAction::OnNextFrame);
+        break;
+    }
+    }
+    
 }
+

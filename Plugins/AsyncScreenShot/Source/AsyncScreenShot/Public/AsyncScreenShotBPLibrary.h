@@ -32,6 +32,12 @@ enum class EImageFormat : uint8
 	jpg UMETA(DisplayName = "JPG")
 };
 
+UENUM()
+enum class EAsyncRTCombineMode : uint8
+{
+	SingleRT,
+	MultiplyAlpha
+};
 
 
 class UTextureRenderTarget2D;
@@ -44,6 +50,14 @@ struct FAsyncReadEntireRTData
 	bool StartReading = false;
 	TArray<FColor> PixelColors;
 
+};
+
+struct FAsyncReadCombinedRTData
+{
+	TSharedPtr<FAsyncReadEntireRTData, ESPMode::ThreadSafe> ColorRT;
+	TSharedPtr<FAsyncReadEntireRTData, ESPMode::ThreadSafe> AlphaRT;
+
+	EAsyncRTCombineMode Mode = EAsyncRTCombineMode::SingleRT;
 };
 
 UCLASS()
@@ -71,6 +85,9 @@ class UAsyncScreenshotRTAction : public UBlueprintAsyncActionBase
 public:
 	UFUNCTION(BlueprintCallable, meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContextObject"), Category = "ScreenshotTaker Functionality")
 	static UAsyncScreenshotRTAction* SaveRenderTarget(UObject* WorldContextObject, UTextureRenderTarget2D* RenderTarget, FString PathToSave, FString Name, bool bFlushRHI);
+	UFUNCTION(BlueprintCallable, meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContextObject"), Category = "ScreenshotTaker Functionality")
+	static UAsyncScreenshotRTAction* SaveRenderTargetsMultiplyAlpha(UObject* WorldContextObject, UTextureRenderTarget2D* ColorRT, UTextureRenderTarget2D* AlphaRT, FString PathToSave, FString Name, bool bFlushRHI);
+
 
 	// UBlueprintAsyncActionBase interface
 	virtual void Activate() override;
@@ -80,7 +97,14 @@ public:
 	UObject* WorldContextObject;
 
 	UPROPERTY()
-	UTextureRenderTarget2D* RT;
+	UTextureRenderTarget2D* RT = nullptr;
+
+	UPROPERTY()
+	UTextureRenderTarget2D* AlphaRT = nullptr;
+
+	EAsyncRTCombineMode CombineMode = EAsyncRTCombineMode::SingleRT;
+
+	TSharedPtr<FAsyncReadCombinedRTData, ESPMode::ThreadSafe> CombinedData;
 
 	int32 X;
 	int32 Y;
