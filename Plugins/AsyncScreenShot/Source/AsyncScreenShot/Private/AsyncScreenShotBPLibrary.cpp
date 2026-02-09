@@ -141,14 +141,26 @@ int CaptureAnImage(HWND hWnd, const std::string& path, EImageFormat ImageFormat,
         bmfHeader.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
         bmfHeader.bfSize = dwBmpSize + bmfHeader.bfOffBits;
 
-        HANDLE hFile = CreateFile(std::wstring(path.begin(), path.end()).c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-        if (hFile)
+        std::wstring WidePath;
+        int needed = MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, NULL, 0);
+        if (needed > 0)
         {
-            DWORD dwBytesWritten;
-            WriteFile(hFile, &bmfHeader, sizeof(BITMAPFILEHEADER), &dwBytesWritten, NULL);
-            WriteFile(hFile, &bi, sizeof(BITMAPINFOHEADER), &dwBytesWritten, NULL);
-            WriteFile(hFile, lpbitmap, dwBmpSize, &dwBytesWritten, NULL);
-            CloseHandle(hFile);
+            WidePath.resize(needed);
+            MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, WidePath.data(), needed);
+            WidePath.pop_back();  
+        }
+
+        if (!WidePath.empty())
+        {
+            HANDLE hFile = CreateFile(WidePath.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+            if (hFile != INVALID_HANDLE_VALUE)
+            {
+                DWORD dwBytesWritten;
+                WriteFile(hFile, &bmfHeader, sizeof(BITMAPFILEHEADER), &dwBytesWritten, NULL);
+                WriteFile(hFile, &bi, sizeof(BITMAPINFOHEADER), &dwBytesWritten, NULL);
+                WriteFile(hFile, lpbitmap, dwBmpSize, &dwBytesWritten, NULL);
+                CloseHandle(hFile);
+            }
         }
     }
 
@@ -173,11 +185,11 @@ void UAsyncScreenShotBPLibrary::SaveGameScreen(FString PathToSave, FString Name,
         Name = "Blank";
     }
 
-
     AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [PathToSave, Name, ImageFormat, Quality] {
         GdiplusStartupInput GDIplusStartupInput;
         ULONG_PTR GDIplusToken;
         GdiplusStartup(&GDIplusToken, &GDIplusStartupInput, NULL);
+        
         FString FormatEnd;
         switch (ImageFormat)
         {
@@ -190,24 +202,25 @@ void UAsyncScreenShotBPLibrary::SaveGameScreen(FString PathToSave, FString Name,
         default:
             break;
         }
+        
         FString FullPath = PathToSave + Name + FormatEnd;
-        string FolderPath = std::string(TCHAR_TO_UTF8(*PathToSave));
-        FolderPath.pop_back();
-        std::wstring stemp = std::wstring(FolderPath.begin(), FolderPath.end());
-        LPCWSTR sw = stemp.c_str();
-        // get the bitmap handle to the bitmap screenshot
+        
+        std::wstring WideFolderPath(TCHAR_TO_WCHAR(*PathToSave));
+        
+        if (!WideFolderPath.empty() && WideFolderPath.back() == L'\\')
+        {
+            WideFolderPath.pop_back();
+        }
+        
         HWND hWnd = static_cast<HWND>(GEngine->GameViewport->GetWindow()->GetNativeWindow()->GetOSWindowHandle());
 
-
-        fs::create_directories(FolderPath);
+        fs::create_directories(WideFolderPath);
 
         CaptureAnImage(hWnd, std::string(TCHAR_TO_UTF8(*FullPath)), ImageFormat, Quality);
-        // save as png to memory 
-
 
         GdiplusShutdown(GDIplusToken);
-
-        });
+    });
+}
 
 
     /* Native c++ multihread
@@ -235,7 +248,7 @@ void UAsyncScreenShotBPLibrary::SaveGameScreen(FString PathToSave, FString Name,
 
     my_thread.detach();
     */
-}
+
 void PollRTRead(FRHICommandListImmediate& RHICmdList, TSharedPtr<FAsyncReadEntireRTData, ESPMode::ThreadSafe> ReadData, TWeakObjectPtr<UAsyncScreenshotRTAction> ReadAction, bool bFlushRHI)
 {
     SCOPED_NAMED_EVENT_TEXT("AsyncScreenshot::AsyncReadRT::PollRTRead", FColor::Magenta);
@@ -369,35 +382,30 @@ void WritePixelsToFile(FTextureRHIRef RenderTarget, FString PathToSave, FString 
     TArray<FColor> PixelArrayCopy = PixelToCopy;
 
     AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [Action, RenderTarget, PathToSave, Name, PixelArrayCopy]() {
-        try
-        {
-            int32 InSizeX = RenderTarget->GetSizeX();
-            int32 InSizeY = RenderTarget->GetSizeY();
-            SCOPED_NAMED_EVENT_TEXT("AsyncScreenshot::AsyncReadRT::WriteImage", FColor::Magenta);
 
-            int32 size = PixelArrayCopy.Num();
+         int32 InSizeX = RenderTarget->GetSizeX();
+         int32 InSizeY = RenderTarget->GetSizeY();
+         SCOPED_NAMED_EVENT_TEXT("AsyncScreenshot::AsyncReadRT::WriteImage", FColor::Magenta);
 
-            FString FullPath = PathToSave + Name + FString(".png");
+         int32 size = PixelArrayCopy.Num();
+
+         FString FullPath = PathToSave + Name + FString(".png");
             
-            std::wstring WideFolderPath(TCHAR_TO_WCHAR(*FullPath));
-            std::string AnsiFolderPath(TCHAR_TO_ANSI(*FullPath));
+         std::wstring WideFolderPath(TCHAR_TO_WCHAR(*FullPath));
+         std::string Utf8FolderPath(TCHAR_TO_UTF8(*FullPath));  
 
-            std::vector<uint8> data;
-            data.reserve(size * 4);
-            for (int i = 0; i < size; i++) {
-                data.push_back(PixelArrayCopy[i].R);
-                data.push_back(PixelArrayCopy[i].G);
-                data.push_back(PixelArrayCopy[i].B);
-                data.push_back(PixelArrayCopy[i].A);
-            }
+         std::vector<uint8> data;
+         data.reserve(size * 4);
+         for (int i = 0; i < size; i++) {
+             data.push_back(PixelArrayCopy[i].R);
+             data.push_back(PixelArrayCopy[i].G);
+             data.push_back(PixelArrayCopy[i].B);
+             data.push_back(PixelArrayCopy[i].A);
+         }
             
-            fs::create_directories(fs::path(WideFolderPath).parent_path());
-            stbi_write_png(AnsiFolderPath.c_str(), InSizeX, InSizeY, 4, static_cast<void*>(data.data()), 4 * InSizeX);
-        }
-        catch (const std::exception& e)
-        {
-            UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: Failed to write file - %s"), ANSI_TO_TCHAR(e.what()));
-        }
+        fs::create_directories(fs::path(WideFolderPath).parent_path());
+        stbi_write_png(Utf8FolderPath.c_str(), InSizeX, InSizeY, 4, static_cast<void*>(data.data()), 4 * InSizeX);  
+
 
         AsyncTask(ENamedThreads::GameThread, [Action]() {
             if (Action.IsValid())
