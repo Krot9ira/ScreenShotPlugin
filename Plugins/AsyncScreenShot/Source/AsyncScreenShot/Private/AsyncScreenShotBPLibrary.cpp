@@ -366,34 +366,38 @@ UAsyncScreenshotRTAction* UAsyncScreenshotRTAction::SaveRenderTargetsMultiplyAlp
 
 void WritePixelsToFile(FTextureRHIRef RenderTarget, FString PathToSave, FString Name, TArray<FColor>& PixelToCopy, TWeakObjectPtr<UAsyncScreenshotRTAction> Action)
 {
+    TArray<FColor> PixelArrayCopy = PixelToCopy;
 
-    AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [Action, RenderTarget, PathToSave, Name, &PixelToCopy]() {
-        int32 InSizeX = RenderTarget->GetSizeX();
-        int32 InSizeY = RenderTarget->GetSizeY();
-        SCOPED_NAMED_EVENT_TEXT("AsyncScreenshot::AsyncReadRT::WriteImage", FColor::Magenta);
+    AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [Action, RenderTarget, PathToSave, Name, PixelArrayCopy]() {
+        try
+        {
+            int32 InSizeX = RenderTarget->GetSizeX();
+            int32 InSizeY = RenderTarget->GetSizeY();
+            SCOPED_NAMED_EVENT_TEXT("AsyncScreenshot::AsyncReadRT::WriteImage", FColor::Magenta);
 
+            int32 size = PixelArrayCopy.Num();
 
-        TArray<FColor> PixelArray;
-        int32 sizeOfImage = InSizeX * InSizeY;
-        PixelArray.SetNum(sizeOfImage);
+            FString FullPath = PathToSave + Name + FString(".png");
+            
+            std::wstring WideFolderPath(TCHAR_TO_WCHAR(*FullPath));
+            std::string AnsiFolderPath(TCHAR_TO_ANSI(*FullPath));
 
-
-        PixelArray = std::move(PixelToCopy);
-        int32 size = PixelArray.Num();
-
-        FString FullPath = PathToSave + Name + FString(".png");
-        string FolderPath = std::string(TCHAR_TO_UTF8(*FullPath));
-
-        std::vector<uint8> data;
-        FString pixString;
-        for (int i = 0; i < size; i++) {
-            data.push_back(PixelArray[i].R);
-            data.push_back(PixelArray[i].G);
-            data.push_back(PixelArray[i].B);
-            data.push_back(PixelArray[i].A);
+            std::vector<uint8> data;
+            data.reserve(size * 4);
+            for (int i = 0; i < size; i++) {
+                data.push_back(PixelArrayCopy[i].R);
+                data.push_back(PixelArrayCopy[i].G);
+                data.push_back(PixelArrayCopy[i].B);
+                data.push_back(PixelArrayCopy[i].A);
+            }
+            
+            fs::create_directories(fs::path(WideFolderPath).parent_path());
+            stbi_write_png(AnsiFolderPath.c_str(), InSizeX, InSizeY, 4, static_cast<void*>(data.data()), 4 * InSizeX);
         }
-        fs::create_directories(fs::path(FolderPath).parent_path());
-        stbi_write_png(FolderPath.data(), InSizeX, InSizeY, 4, static_cast<void*>(data.data()), 4 * InSizeX);
+        catch (const std::exception& e)
+        {
+            UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: Failed to write file - %s"), ANSI_TO_TCHAR(e.what()));
+        }
 
         AsyncTask(ENamedThreads::GameThread, [Action]() {
             if (Action.IsValid())
@@ -401,10 +405,10 @@ void WritePixelsToFile(FTextureRHIRef RenderTarget, FString PathToSave, FString 
                 Action->OnSaveRenderTarget.Broadcast();
                 Action->SetReadyToDestroy();
             }
-            });
-
         });
+    });
 }
+
 
 #endif
 FString UAsyncScreenShotBPLibrary::GetScreenshotSavePath()
