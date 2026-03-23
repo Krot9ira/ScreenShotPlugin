@@ -57,6 +57,11 @@ using namespace std;
 
 #pragma comment(lib,"gdiplus.lib")
 
+static void PngWriteCallback(void* context, void* data, int size)
+{
+    FILE* file = static_cast<FILE*>(context);
+    fwrite(data, 1, size, file);
+}
 
 void Bgra2Rgb(const unsigned char* src, int w, int h, int d, unsigned char* dst)
 {
@@ -295,13 +300,13 @@ void PollRTRead(FRHICommandListImmediate& RHICmdList, TSharedPtr<FAsyncReadEntir
 
     if (Format == EPixelFormat::PF_B8G8R8A8)
     {
-        const int32 BytesPerPixel = GPixelFormats[Format].BlockBytes; // = 4 äëÿ B8G8R8A8
+        const int32 BytesPerPixel = GPixelFormats[Format].BlockBytes; // = 4 Ð´Ð»Ñ B8G8R8A8
         uint8* Src = static_cast<uint8*>(OutputBuffer);
         FColor* Dst = ReadData->PixelColors.GetData();
 
         for (int32 Y = 0; Y < Height; Y++)
         {
-            // Ñìåùåíèå â áàéòàõ ñ ó÷¸òîì pitch
+            // Ð¡Ð¼ÐµÑ‰ÐµÐ½Ð¸Ðµ Ð² Ð±Ð°Ð¹Ñ‚Ð°Ñ… Ñ ÑƒÑ‡Ñ‘Ñ‚Ð¾Ð¼ pitch
             uint8* RowSrc = Src + Y * RowPitchInPixels * BytesPerPixel;
             FMemory::Memcpy(Dst + Y * Width, RowSrc, Width * BytesPerPixel);
         }
@@ -403,8 +408,34 @@ void WritePixelsToFile(FTextureRHIRef RenderTarget, FString PathToSave, FString 
              data.push_back(PixelArrayCopy[i].A);
          }
             
-        fs::create_directories(fs::path(WideFolderPath).parent_path());
-        stbi_write_png(Utf8FolderPath.c_str(), InSizeX, InSizeY, 4, static_cast<void*>(data.data()), 4 * InSizeX);  
+         fs::create_directories(fs::path(WideFolderPath).parent_path());
+
+         FILE* File;
+         _wfopen_s(&File, WideFolderPath.c_str(), L"wb");
+
+         if (File)
+         {
+             int Result = stbi_write_png_to_func(
+                 PngWriteCallback,
+                 File,
+                 InSizeX,
+                 InSizeY,
+                 4,
+                 data.data(),
+                 4 * InSizeX
+             );
+
+             fclose(File);
+
+             if (Result == 0)
+             {
+                 UE_LOG(LogTemp, Error, TEXT("Failed to write PNG (stb error): %s"), *FullPath);
+             }
+         }
+         else
+         {
+             UE_LOG(LogTemp, Error, TEXT("Failed to open file for writing: %s"), *FullPath);
+         }
 
 
         AsyncTask(ENamedThreads::GameThread, [Action]() {
