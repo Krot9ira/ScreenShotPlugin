@@ -178,13 +178,13 @@ int CaptureAnImage(HWND hWnd, const std::string& path, EImageFormat ImageFormat,
     return 1;
 }
 
-
+#endif
 
 
 
 void UAsyncScreenShotBPLibrary::SaveGameScreen(FString PathToSave, FString Name, EImageFormat ImageFormat, int Quality)
 {
-
+#if PLATFORM_WINDOWS
     if (Name == "")
     {
         Name = "Blank";
@@ -225,6 +225,7 @@ void UAsyncScreenShotBPLibrary::SaveGameScreen(FString PathToSave, FString Name,
 
         GdiplusShutdown(GDIplusToken);
     });
+#endif
 }
 
 
@@ -384,6 +385,7 @@ UAsyncScreenshotRTAction* UAsyncScreenshotRTAction::SaveRenderTargetsMultiplyAlp
 
 void WritePixelsToFile(FTextureRHIRef RenderTarget, FString PathToSave, FString Name, TArray<FColor>& PixelToCopy, TWeakObjectPtr<UAsyncScreenshotRTAction> Action)
 {
+#if PLATFORM_WINDOWS
     TArray<FColor> PixelArrayCopy = PixelToCopy;
 
     AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [Action, RenderTarget, PathToSave, Name, PixelArrayCopy]() {
@@ -446,10 +448,11 @@ void WritePixelsToFile(FTextureRHIRef RenderTarget, FString PathToSave, FString 
             }
         });
     });
+#endif
 }
 
 
-#endif
+
 FString UAsyncScreenShotBPLibrary::GetScreenshotSavePath()
 {
     return FPaths::ConvertRelativePathToFull(FPaths::ScreenShotDir());
@@ -518,14 +521,10 @@ void UAsyncScreenshotRTAction::OnNextFrame()
     }
     
 }
-#if !PLATFORM_WINDOWS
-void UAsyncScreenShotBPLibrary::SaveGameScreen(FString PathToSave, FString Name)
-{
-}
-#endif
 
 void UAsyncScreenshotRTAction::Activate()
 {
+#if PLATFORM_WINDOWS
     switch (CombineMode)
     {
     case EAsyncRTCombineMode::SingleRT:
@@ -633,6 +632,9 @@ void UAsyncScreenshotRTAction::Activate()
         break;
     }
     }
-    
+#else
+    OnSaveRenderTarget.Broadcast();
+    SetReadyToDestroy();
+#endif
 }
 
