@@ -13,8 +13,6 @@
 #include "Widgets/SWindow.h"
 #include "Runtime/Launch/Resources/Version.h"
 #include "TimerManager.h"
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#include "stb_image_write.h"
 #include "Engine/GameViewportClient.h"
 #include "Misc/Paths.h"
 #include "Async/Async.h"
@@ -27,6 +25,8 @@ UAsyncScreenShotBPLibrary::UAsyncScreenShotBPLibrary(const FObjectInitializer& O
 
 
 #if PLATFORM_WINDOWS
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
 #include <windows.h>
 THIRD_PARTY_INCLUDES_START
 #include <gdiplus.h>
