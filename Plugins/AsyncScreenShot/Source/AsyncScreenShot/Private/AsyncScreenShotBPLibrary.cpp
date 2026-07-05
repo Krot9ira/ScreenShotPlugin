@@ -495,7 +495,7 @@ void PollRTRead(FRHICommandListImmediate& RHICmdList, TSharedPtr<FAsyncReadEntir
 }
 
 UAsyncScreenshotRTAction* UAsyncScreenshotRTAction::SaveRenderTarget(UObject* WorldContextObject, UTextureRenderTarget2D* RenderTarget, FString PathToSave, FString Name, bool bFlushRHI,
-    bool bAutoUniqueName, bool bExportHDRForFloatRT, bool bSaveToDisk, bool bReturnAsTexture,
+    bool bAutoUniqueName, bool bExportHDRForFloatRT, bool bSaveToDisk,
     int32 CropX, int32 CropY, int32 CropWidth, int32 CropHeight, float DownscaleFactor)
 {
     UAsyncScreenshotRTAction* BlueprintNode = NewObject<UAsyncScreenshotRTAction>();
@@ -510,7 +510,7 @@ UAsyncScreenshotRTAction* UAsyncScreenshotRTAction::SaveRenderTarget(UObject* Wo
     BlueprintNode->bAutoUniqueName = bAutoUniqueName;
     BlueprintNode->bExportHDRForFloatRT = bExportHDRForFloatRT;
     BlueprintNode->bSaveToDisk = bSaveToDisk;
-    BlueprintNode->bReturnAsTexture = bReturnAsTexture;
+    BlueprintNode->bReturnAsTexture = false;
     BlueprintNode->CropX = CropX;
     BlueprintNode->CropY = CropY;
     BlueprintNode->CropWidth = CropWidth;

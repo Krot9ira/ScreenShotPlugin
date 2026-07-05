@@ -105,7 +105,7 @@ class UAsyncScreenshotRTAction : public UBlueprintAsyncActionBase
 public:
 	UFUNCTION(BlueprintCallable, meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContextObject"), Category = "ScreenshotTaker Functionality")
 	static UAsyncScreenshotRTAction* SaveRenderTarget(UObject* WorldContextObject, UTextureRenderTarget2D* RenderTarget, FString PathToSave, FString Name, bool bFlushRHI,
-		bool bAutoUniqueName = false, bool bExportHDRForFloatRT = false, bool bSaveToDisk = true, bool bReturnAsTexture = false,
+		bool bAutoUniqueName = false, bool bExportHDRForFloatRT = false, bool bSaveToDisk = true,
 		int32 CropX = -1, int32 CropY = -1, int32 CropWidth = -1, int32 CropHeight = -1, float DownscaleFactor = 1.0f);
 	UFUNCTION(BlueprintCallable, meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContextObject"), Category = "ScreenshotTaker Functionality")
 	static UAsyncScreenshotRTAction* SaveRenderTargetsMultiplyAlpha(UObject* WorldContextObject, UTextureRenderTarget2D* ColorRT, UTextureRenderTarget2D* AlphaRT, FString PathToSave, FString Name, bool bFlushRHI,
