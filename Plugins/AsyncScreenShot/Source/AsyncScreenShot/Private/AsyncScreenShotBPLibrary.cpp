@@ -362,126 +362,121 @@ UAsyncScreenshotRTAction* UAsyncScreenshotRTAction::SaveRenderTargetsMultiplyAlp
 namespace AsyncScreenShot::Private
 {
 
-	void WritePixelsToFile(FString PathToSave, FString Name, TArray<FColor>& PixelToCopy, int32 InWidth, int32 InHeight, TWeakObjectPtr<UAsyncScreenshotRTAction> Action,
+	// FColor is BGRA in memory; stb wants RGBA. Swapping the two channels in place turns the pixel array
+	// itself into the byte buffer the encoder needs, rather than building a second one of the same size.
+	static void SwapRedAndBlue(TArray<FColor>& Pixels)
+	{
+		for (FColor& Pixel : Pixels)
+		{
+			Swap(Pixel.R, Pixel.B);
+		}
+	}
+
+	// Pixel buffers are big - a 4K capture is 33 MB - so ownership moves into a shared pointer that the
+	// background write and the game thread completion both capture by handle. This used to copy the array
+	// into a local, again into the write lambda, again into a std::vector of bytes, and once more into the
+	// completion lambda: four copies of the same 33 MB, three of them avoidable.
+	void WritePixelsToFile(FString PathToSave, FString Name, TArray<FColor>&& PixelsIn, int32 InWidth, int32 InHeight, TWeakObjectPtr<UAsyncScreenshotRTAction> Action,
 		bool bAutoUniqueName, bool bSaveToDisk, bool bReturnAsTexture)
 	{
-		TArray<FColor> PixelArrayCopy = PixelToCopy;
+		TSharedPtr<TArray<FColor>, ESPMode::ThreadSafe> Pixels = MakeShared<TArray<FColor>, ESPMode::ThreadSafe>(MoveTemp(PixelsIn));
 
-		AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [Action, PathToSave, Name, PixelArrayCopy, InWidth, InHeight, bAutoUniqueName, bSaveToDisk, bReturnAsTexture]() {
-
+		AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [Action, PathToSave, Name, Pixels, InWidth, InHeight, bAutoUniqueName, bSaveToDisk, bReturnAsTexture]()
+		{
 			SCOPED_NAMED_EVENT_TEXT("AsyncScreenshot::AsyncReadRT::WriteImage", FColor::Magenta);
 
 			if (bSaveToDisk)
 			{
-				const int32 size = PixelArrayCopy.Num();
-
-				FString FullPath = FPaths::Combine(PathToSave, Name) + FString(".png");
-				FullPath = MakeUniquePath(FullPath, bAutoUniqueName);
+				FString FullPath = MakeUniquePath(FPaths::Combine(PathToSave, Name) + TEXT(".png"), bAutoUniqueName);
 				CreateDirectoriesForFile(FullPath);
 
-				std::vector<uint8> data;
-				data.reserve((size_t)size * 4);
-				for (int32 i = 0; i < size; i++) {
-					data.push_back(PixelArrayCopy[i].R);
-					data.push_back(PixelArrayCopy[i].G);
-					data.push_back(PixelArrayCopy[i].B);
-					data.push_back(PixelArrayCopy[i].A);
-				}
+				SwapRedAndBlue(*Pixels);
 
-				FILE* File = OpenFileForWrite(FullPath);
-
-				if (File)
+				if (FILE* File = OpenFileForWrite(FullPath))
 				{
-					int Result = stbi_write_png_to_func(
-						PngWriteCallback,
-						File,
-						InWidth,
-						InHeight,
-						4,
-						data.data(),
-						4 * InWidth
-					);
-
+					const bool bEncoded = stbi_write_png_to_func(PngWriteCallback, File, InWidth, InHeight, 4, Pixels->GetData(), InWidth * 4) != 0;
 					fclose(File);
 
-					if (Result == 0)
+					if (!bEncoded)
 					{
-						UE_LOG(LogTemp, Error, TEXT("Failed to write PNG (stb error): %s"), *FullPath);
+						UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: Failed to encode PNG: %s"), *FullPath);
 					}
 				}
 				else
 				{
-					UE_LOG(LogTemp, Error, TEXT("Failed to open file for writing: %s"), *FullPath);
+					UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: Failed to open file for writing: %s"), *FullPath);
+				}
+
+				if (bReturnAsTexture)
+				{
+					SwapRedAndBlue(*Pixels);
 				}
 			}
 
-			AsyncTask(ENamedThreads::GameThread, [Action, PixelArrayCopy, InWidth, InHeight, bReturnAsTexture]() {
-				if (Action.IsValid())
+			AsyncTask(ENamedThreads::GameThread, [Action, Pixels, InWidth, InHeight, bReturnAsTexture]()
+			{
+				if (!Action.IsValid())
 				{
-					if (bReturnAsTexture)
-					{
-						UTexture2D* Tex = UTexture2D::CreateTransient(InWidth, InHeight, PF_B8G8R8A8, NAME_None,
-							TConstArrayView64<uint8>(reinterpret_cast<const uint8*>(PixelArrayCopy.GetData()), (int64)PixelArrayCopy.Num() * sizeof(FColor)));
-						if (Tex)
-						{
-							Tex->UpdateResource();
-							Action->OnCapturedTexture.Broadcast(Tex);
-						}
-					}
-					Action->OnSaveRenderTarget.Broadcast();
-					Action->SetReadyToDestroy();
+					return;
 				}
-				});
+
+				if (bReturnAsTexture)
+				{
+					UTexture2D* Texture = UTexture2D::CreateTransient(InWidth, InHeight, PF_B8G8R8A8, NAME_None,
+						TConstArrayView64<uint8>(reinterpret_cast<const uint8*>(Pixels->GetData()), (int64)Pixels->Num() * sizeof(FColor)));
+					if (Texture)
+					{
+						Texture->UpdateResource();
+						Action->OnCapturedTexture.Broadcast(Texture);
+					}
+				}
+
+				Action->OnSaveRenderTarget.Broadcast();
+				Action->SetReadyToDestroy();
 			});
+		});
 	}
 
-	// Writes the raw (non-tonemapped) linear float pixels of a PF_FloatRGBA render target to a Radiance .hdr file,
-	// preserving full HDR range. Chosen over a custom EXR writer since stb_image_write already ships an HDR encoder,
-	// avoiding a new third-party dependency.
-	void WriteLinearPixelsToHDRFile(FString PathToSave, FString Name, TArray<FLinearColor> PixelToCopy, int32 InWidth, int32 InHeight, TWeakObjectPtr<UAsyncScreenshotRTAction> Action, bool bAutoUniqueName)
+	// Writes the raw (non-tonemapped) linear float pixels of a PF_FloatRGBA render target to a Radiance .hdr
+	// file, preserving the full HDR range. stb already ships an HDR encoder, so this costs no new dependency.
+	// FLinearColor is four contiguous floats and stb's writer reads the first three of every four, so the
+	// array can be handed to it as-is - the intermediate std::vector<float> this used to build was pure copy.
+	void WriteLinearPixelsToHDRFile(FString PathToSave, FString Name, TArray<FLinearColor>&& PixelsIn, int32 InWidth, int32 InHeight, TWeakObjectPtr<UAsyncScreenshotRTAction> Action, bool bAutoUniqueName)
 	{
-		AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [Action, PathToSave, Name, PixelToCopy, InWidth, InHeight, bAutoUniqueName]() {
+		TSharedPtr<TArray<FLinearColor>, ESPMode::ThreadSafe> Pixels = MakeShared<TArray<FLinearColor>, ESPMode::ThreadSafe>(MoveTemp(PixelsIn));
 
+		AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [Action, PathToSave, Name, Pixels, InWidth, InHeight, bAutoUniqueName]()
+		{
 			SCOPED_NAMED_EVENT_TEXT("AsyncScreenshot::AsyncReadRT::WriteHDR", FColor::Magenta);
 
-			FString FullPath = FPaths::Combine(PathToSave, Name) + FString(".hdr");
-			FullPath = MakeUniquePath(FullPath, bAutoUniqueName);
+			FString FullPath = MakeUniquePath(FPaths::Combine(PathToSave, Name) + TEXT(".hdr"), bAutoUniqueName);
 			CreateDirectoriesForFile(FullPath);
 
-			std::vector<float> data;
-			data.reserve((size_t)PixelToCopy.Num() * 4);
-			for (const FLinearColor& C : PixelToCopy)
+			if (FILE* File = OpenFileForWrite(FullPath))
 			{
-				data.push_back(C.R);
-				data.push_back(C.G);
-				data.push_back(C.B);
-				data.push_back(C.A);
-			}
-
-			FILE* File = OpenFileForWrite(FullPath);
-			if (File)
-			{
-				int Result = stbi_write_hdr_to_func(PngWriteCallback, File, InWidth, InHeight, 4, data.data());
+				const bool bEncoded = stbi_write_hdr_to_func(PngWriteCallback, File, InWidth, InHeight, 4,
+					reinterpret_cast<const float*>(Pixels->GetData())) != 0;
 				fclose(File);
 
-				if (Result == 0)
+				if (!bEncoded)
 				{
-					UE_LOG(LogTemp, Error, TEXT("Failed to write HDR (stb error): %s"), *FullPath);
+					UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: Failed to encode HDR: %s"), *FullPath);
 				}
 			}
 			else
 			{
-				UE_LOG(LogTemp, Error, TEXT("Failed to open file for writing: %s"), *FullPath);
+				UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: Failed to open file for writing: %s"), *FullPath);
 			}
 
-			AsyncTask(ENamedThreads::GameThread, [Action]() {
+			AsyncTask(ENamedThreads::GameThread, [Action]()
+			{
 				if (Action.IsValid())
 				{
 					Action->OnSaveRenderTarget.Broadcast();
 					Action->SetReadyToDestroy();
 				}
-				});
 			});
+		});
 	}
 
 } // namespace AsyncScreenShot::Private
@@ -557,12 +552,12 @@ void UAsyncScreenshotRTAction::OnNextFrame()
 
 			if (bExportHDRForFloatRT && ReadRTData->LinearColors.Num() == Width * Height)
 			{
-				AsyncScreenShot::Private::WriteLinearPixelsToHDRFile(SavedPathToSave, SavedName, ReadRTData->LinearColors, Width, Height, this, bAutoUniqueName);
+				AsyncScreenShot::Private::WriteLinearPixelsToHDRFile(SavedPathToSave, SavedName, MoveTemp(ReadRTData->LinearColors), Width, Height, this, bAutoUniqueName);
 			}
 			else
 			{
 				AsyncScreenShot::Private::CropAndDownscaleColors(ReadRTData->PixelColors, Width, Height, CropX, CropY, CropWidth, CropHeight, DownscaleFactor);
-				AsyncScreenShot::Private::WritePixelsToFile(SavedPathToSave, SavedName, ReadRTData->PixelColors, Width, Height, this, bAutoUniqueName, bSaveToDisk, bReturnAsTexture);
+				AsyncScreenShot::Private::WritePixelsToFile(SavedPathToSave, SavedName, MoveTemp(ReadRTData->PixelColors), Width, Height, this, bAutoUniqueName, bSaveToDisk, bReturnAsTexture);
 			}
 			return;
 		}
@@ -639,7 +634,7 @@ void UAsyncScreenshotRTAction::OnNextFrame()
 			Color[i].A = (uint8)(FMath::Clamp(ColorAlpha * MaskAlphaInv, 0.f, 1.f) * 255);
 		}
 
-		AsyncScreenShot::Private::WritePixelsToFile(SavedPathToSave, SavedName, Color, CombinedData->ColorRT->Texture->GetSizeX(), CombinedData->ColorRT->Texture->GetSizeY(), this, bAutoUniqueName, true, false);
+		AsyncScreenShot::Private::WritePixelsToFile(SavedPathToSave, SavedName, MoveTemp(Color), CombinedData->ColorRT->Texture->GetSizeX(), CombinedData->ColorRT->Texture->GetSizeY(), this, bAutoUniqueName, true, false);
 		return;
 		break;
 	}
