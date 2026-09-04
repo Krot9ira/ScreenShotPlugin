@@ -8,6 +8,7 @@
 #include "Engine/World.h"
 #include "Engine/Engine.h"
 #include "Engine/GameViewportClient.h"
+#include "RenderUtils.h"
 
 UAsyncSuperResolutionScreenshotAction* UAsyncSuperResolutionScreenshotAction::CaptureSuperResolutionScreenshot(UObject* WorldContextObject, float ResolutionMultiplier, FString PathToSave, FString Name, bool bAutoUniqueName)
 {
@@ -41,8 +42,17 @@ void UAsyncSuperResolutionScreenshotAction::Activate()
 		GEngine->GameViewport->GetViewportSize(ViewportSize);
 	}
 
-	const int32 Width = FMath::Max(1, FMath::RoundToInt(ViewportSize.X * ResolutionMultiplier));
-	const int32 Height = FMath::Max(1, FMath::RoundToInt(ViewportSize.Y * ResolutionMultiplier));
+	// Clamp against what the RHI can actually allocate. A 4x shot of a 4K viewport is already a 530 MB
+	// render target before the readback buffers on top, and nothing above capped the multiplier.
+	const int32 MaxDimension = (int32)GetMax2DTextureDimension();
+	const int32 Width = FMath::Clamp(FMath::RoundToInt(ViewportSize.X * ResolutionMultiplier), 1, MaxDimension);
+	const int32 Height = FMath::Clamp(FMath::RoundToInt(ViewportSize.Y * ResolutionMultiplier), 1, MaxDimension);
+
+	if (Width != FMath::RoundToInt(ViewportSize.X * ResolutionMultiplier)
+		|| Height != FMath::RoundToInt(ViewportSize.Y * ResolutionMultiplier))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("AsyncScreenshot: Requested super-resolution size exceeds the %dpx texture limit, clamping to %dx%d"), MaxDimension, Width, Height);
+	}
 
 	CaptureActor = World->SpawnActor<AActor>();
 	if (!CaptureActor)
@@ -54,6 +64,8 @@ void UAsyncSuperResolutionScreenshotAction::Activate()
 	}
 
 	CaptureComponent = NewObject<USceneCaptureComponent2D>(CaptureActor);
+	CaptureComponent->bCaptureEveryFrame = false;
+	CaptureComponent->bCaptureOnMovement = false;
 	CaptureComponent->RegisterComponentWithWorld(World);
 
 	CaptureRT = NewObject<UTextureRenderTarget2D>();
@@ -67,11 +79,18 @@ void UAsyncSuperResolutionScreenshotAction::Activate()
 
 	CaptureComponent->SetWorldLocationAndRotation(CamLoc, CamRot);
 	CaptureComponent->FOVAngle = PC->PlayerCameraManager->GetFOVAngle();
+
+	// Without this the capture renders with the component's default post processing, so exposure, bloom
+	// and colour grading do not match the frame the player is looking at.
+	CaptureComponent->PostProcessSettings = PC->PlayerCameraManager->GetCameraCacheView().PostProcessSettings;
+	CaptureComponent->PostProcessBlendWeight = PC->PlayerCameraManager->GetCameraCacheView().PostProcessBlendWeight;
 	CaptureComponent->TextureTarget = CaptureRT;
 	CaptureComponent->CaptureSource = ESceneCaptureSource::SCS_FinalColorLDR;
 	CaptureComponent->CaptureScene();
 
-	InnerAction = UAsyncScreenshotRTAction::SaveRenderTarget(WorldContextObject, CaptureRT, SavedPathToSave, SavedName, /*bFlushRHI=*/true, bAutoUniqueName);
+	// CaptureScene() has queued the render; the readback's own fence orders the copy after it, so there is
+	// no reason to stall the game thread on a full RHI flush in a plugin whose whole point is not to.
+	InnerAction = UAsyncScreenshotRTAction::SaveRenderTarget(WorldContextObject, CaptureRT, SavedPathToSave, SavedName, /*bFlushRHI=*/false, bAutoUniqueName);
 	InnerAction->OnSaveRenderTarget.AddDynamic(this, &UAsyncSuperResolutionScreenshotAction::HandleInnerSaveComplete);
 	InnerAction->Activate();
 }
