@@ -17,6 +17,7 @@ UAsyncSuperResolutionScreenshotAction* UAsyncSuperResolutionScreenshotAction::Ca
 	Node->SavedPathToSave = PathToSave;
 	Node->SavedName = Name;
 	Node->bAutoUniqueName = bAutoUniqueName;
+
 	return Node;
 }
 

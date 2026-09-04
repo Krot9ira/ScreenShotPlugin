@@ -28,7 +28,7 @@ void UAsyncScreenshotWindowAction::Activate()
 {
 #if PLATFORM_WINDOWS
 	// HWND must be fetched on the game thread: GEngine->GameViewport is not thread-safe.
-	HWND hWnd = GetActiveGameWindow();
+	HWND hWnd = AsyncScreenShot::Private::GetActiveGameWindow();
 	if (!hWnd)
 	{
 		UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: No valid game window HWND, aborting CaptureGameScreen"));
@@ -42,7 +42,7 @@ void UAsyncScreenshotWindowAction::Activate()
 		CropX = CropX, CropY = CropY, CropWidth = CropWidth, CropHeight = CropHeight, DownscaleFactor = DownscaleFactor] {
 
 		FString OutFullPath;
-		const bool bSuccess = CaptureWindowToFile(hWnd, PathToSave, Name, ImageFormat, Quality, bAutoUniqueName,
+		const bool bSuccess = AsyncScreenShot::Private::CaptureWindowToFile(hWnd, PathToSave, Name, ImageFormat, Quality, bAutoUniqueName,
 			CropX, CropY, CropWidth, CropHeight, DownscaleFactor, OutFullPath);
 
 		AsyncTask(ENamedThreads::GameThread, [WeakThis, bSuccess, OutFullPath] {
