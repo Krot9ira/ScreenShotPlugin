@@ -23,7 +23,7 @@ The render target path uses nothing platform-specific and the Windows-only code 
 ## Installing
 
 Copy `Plugins/AsyncScreenShot` into your project's `Plugins` folder and rebuild. The repository is also a
-working Unreal project — open `PluginMaker.uproject` to try the nodes against the demo map.
+working Unreal project. There is /Script/Engine.Blueprint'/Game/BP/ScreenCapturer.ScreenCapturer' that use plugin nodes to save screenshots of RT/Windows on "H" key press.
 
 ## Nodes
 
