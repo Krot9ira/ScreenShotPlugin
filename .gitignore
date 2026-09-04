@@ -14,6 +14,7 @@ Saved/
 *.opensdf
 *.sdf
 *.suo
+.vsconfig
 
 # Generated project files - regenerate these from the .uproject
 *.sln
@@ -41,3 +42,7 @@ Saved/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Editor-local content metadata
+Content/Collections/
+Content/Developers/
