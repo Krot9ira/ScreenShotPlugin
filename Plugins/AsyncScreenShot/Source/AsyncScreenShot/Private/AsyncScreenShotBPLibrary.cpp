@@ -4,6 +4,8 @@
 #include "AsyncScreenShot.h"
 #include "AsyncScreenshotInternal.h"
 #include "AsyncScreenshotWinCapture.h"
+#include "Engine/Texture2D.h"
+#include "Engine/TextureRenderTarget2D.h"
 #include "Async/TaskGraphInterfaces.h"
 #include "EngineGlobals.h"
 #include "Engine/Engine.h"
@@ -154,7 +156,7 @@ namespace AsyncScreenShot::Private
 
 #if PLATFORM_WINDOWS
 
-void UAsyncScreenShotBPLibrary::SaveGameScreen(FString PathToSave, FString Name, EImageFormat ImageFormat, int Quality, bool bAutoUniqueName)
+void UAsyncScreenShotBPLibrary::SaveGameScreen(FString PathToSave, FString Name, EAsyncScreenshotImageFormat ImageFormat, int32 Quality, bool bAutoUniqueName)
 {
 	if (Name.IsEmpty())
 	{
@@ -177,7 +179,7 @@ void UAsyncScreenShotBPLibrary::SaveGameScreen(FString PathToSave, FString Name,
 
 #else // !PLATFORM_WINDOWS
 
-void UAsyncScreenShotBPLibrary::SaveGameScreen(FString PathToSave, FString Name, EImageFormat ImageFormat, int Quality, bool bAutoUniqueName)
+void UAsyncScreenShotBPLibrary::SaveGameScreen(FString PathToSave, FString Name, EAsyncScreenshotImageFormat ImageFormat, int32 Quality, bool bAutoUniqueName)
 {
 	UE_LOG(LogTemp, Warning, TEXT("AsyncScreenshot: SaveGameScreen (GDI window capture) is only implemented on Windows"));
 }
@@ -306,7 +308,7 @@ namespace AsyncScreenShot::Private
 } // namespace AsyncScreenShot::Private
 
 UAsyncScreenshotRTAction* UAsyncScreenshotRTAction::SaveRenderTarget(UObject* WorldContextObject, UTextureRenderTarget2D* RenderTarget, FString PathToSave, FString Name, bool bFlushRHI,
-	bool bAutoUniqueName, bool bExportHDRForFloatRT, bool bSaveToDisk,
+	bool bAutoUniqueName, bool bExportHDRForFloatRT, bool bSaveToDisk, bool bReturnAsTexture,
 	int32 CropX, int32 CropY, int32 CropWidth, int32 CropHeight, float DownscaleFactor)
 {
 	UAsyncScreenshotRTAction* BlueprintNode = NewObject<UAsyncScreenshotRTAction>();
@@ -320,7 +322,7 @@ UAsyncScreenshotRTAction* UAsyncScreenshotRTAction::SaveRenderTarget(UObject* Wo
 	BlueprintNode->bAutoUniqueName = bAutoUniqueName;
 	BlueprintNode->bExportHDRForFloatRT = bExportHDRForFloatRT;
 	BlueprintNode->bSaveToDisk = bSaveToDisk;
-	BlueprintNode->bReturnAsTexture = false;
+	BlueprintNode->bReturnAsTexture = bReturnAsTexture;
 	BlueprintNode->CropX = CropX;
 	BlueprintNode->CropY = CropY;
 	BlueprintNode->CropWidth = CropWidth;
@@ -385,25 +387,29 @@ namespace AsyncScreenShot::Private
 		{
 			SCOPED_NAMED_EVENT_TEXT("AsyncScreenshot::AsyncReadRT::WriteImage", FColor::Magenta);
 
+			FString FullPath;
+			bool bSucceeded = true;
+
 			if (bSaveToDisk)
 			{
-				FString FullPath = MakeUniquePath(FPaths::Combine(PathToSave, Name) + TEXT(".png"), bAutoUniqueName);
+				FullPath = MakeUniquePath(FPaths::Combine(PathToSave, Name) + TEXT(".png"), bAutoUniqueName);
 				CreateDirectoriesForFile(FullPath);
 
 				SwapRedAndBlue(*Pixels);
 
 				if (FILE* File = OpenFileForWrite(FullPath))
 				{
-					const bool bEncoded = stbi_write_png_to_func(PngWriteCallback, File, InWidth, InHeight, 4, Pixels->GetData(), InWidth * 4) != 0;
+					bSucceeded = stbi_write_png_to_func(PngWriteCallback, File, InWidth, InHeight, 4, Pixels->GetData(), InWidth * 4) != 0;
 					fclose(File);
 
-					if (!bEncoded)
+					if (!bSucceeded)
 					{
 						UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: Failed to encode PNG: %s"), *FullPath);
 					}
 				}
 				else
 				{
+					bSucceeded = false;
 					UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: Failed to open file for writing: %s"), *FullPath);
 				}
 
@@ -413,26 +419,25 @@ namespace AsyncScreenShot::Private
 				}
 			}
 
-			AsyncTask(ENamedThreads::GameThread, [Action, Pixels, InWidth, InHeight, bReturnAsTexture]()
+			AsyncTask(ENamedThreads::GameThread, [Action, Pixels, InWidth, InHeight, bReturnAsTexture, bSucceeded, FullPath]()
 			{
 				if (!Action.IsValid())
 				{
 					return;
 				}
 
+				UTexture2D* Texture = nullptr;
 				if (bReturnAsTexture)
 				{
-					UTexture2D* Texture = UTexture2D::CreateTransient(InWidth, InHeight, PF_B8G8R8A8, NAME_None,
+					Texture = UTexture2D::CreateTransient(InWidth, InHeight, PF_B8G8R8A8, NAME_None,
 						TConstArrayView64<uint8>(reinterpret_cast<const uint8*>(Pixels->GetData()), (int64)Pixels->Num() * sizeof(FColor)));
 					if (Texture)
 					{
 						Texture->UpdateResource();
-						Action->OnCapturedTexture.Broadcast(Texture);
 					}
 				}
 
-				Action->OnSaveRenderTarget.Broadcast();
-				Action->SetReadyToDestroy();
+				Action->FinishSave(bSucceeded, FullPath, Texture);
 			});
 		});
 	}
@@ -451,29 +456,30 @@ namespace AsyncScreenShot::Private
 
 			FString FullPath = MakeUniquePath(FPaths::Combine(PathToSave, Name) + TEXT(".hdr"), bAutoUniqueName);
 			CreateDirectoriesForFile(FullPath);
+			bool bSucceeded = true;
 
 			if (FILE* File = OpenFileForWrite(FullPath))
 			{
-				const bool bEncoded = stbi_write_hdr_to_func(PngWriteCallback, File, InWidth, InHeight, 4,
+				bSucceeded = stbi_write_hdr_to_func(PngWriteCallback, File, InWidth, InHeight, 4,
 					reinterpret_cast<const float*>(Pixels->GetData())) != 0;
 				fclose(File);
 
-				if (!bEncoded)
+				if (!bSucceeded)
 				{
 					UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: Failed to encode HDR: %s"), *FullPath);
 				}
 			}
 			else
 			{
+				bSucceeded = false;
 				UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: Failed to open file for writing: %s"), *FullPath);
 			}
 
-			AsyncTask(ENamedThreads::GameThread, [Action]()
+			AsyncTask(ENamedThreads::GameThread, [Action, bSucceeded, FullPath]()
 			{
 				if (Action.IsValid())
 				{
-					Action->OnSaveRenderTarget.Broadcast();
-					Action->SetReadyToDestroy();
+					Action->FinishSave(bSucceeded, FullPath, nullptr);
 				}
 			});
 		});
@@ -493,7 +499,7 @@ void UAsyncScreenShotBPLibrary::SetPngCompressionLevel(int32 Level)
 	stbi_write_png_compression_level = FMath::Clamp(Level, 0, 9);
 }
 
-void UAsyncScreenShotBPLibrary::SaveScreenshotMetadata(FString PathToSave, FString Name, const TMap<FString, FString>& Metadata)
+bool UAsyncScreenShotBPLibrary::SaveScreenshotMetadata(FString PathToSave, FString Name, const TMap<FString, FString>& Metadata)
 {
 	FString Json = TEXT("{\n");
 	Json += FString::Printf(TEXT("  \"Timestamp\": \"%s\""), *FDateTime::Now().ToIso8601());
@@ -506,11 +512,34 @@ void UAsyncScreenShotBPLibrary::SaveScreenshotMetadata(FString PathToSave, FStri
 
 	const FString FullPath = FPaths::Combine(PathToSave, Name) + TEXT(".json");
 	AsyncScreenShot::Private::CreateDirectoriesForFile(FullPath);
-	FFileHelper::SaveStringToFile(Json, *FullPath);
+
+	if (!FFileHelper::SaveStringToFile(Json, *FullPath))
+	{
+		UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: Failed to write metadata sidecar: %s"), *FullPath);
+		return false;
+	}
+
+	return true;
 }
 
 // Safety net: if the GPU fence never signals (RT destroyed, GPU hang), bail out instead of polling forever.
 static constexpr uint64 MaxWaitFrames = 300;
+
+void UAsyncScreenshotRTAction::FinishSave(bool bSuccess, const FString& FullPath, UTexture2D* CapturedTexture)
+{
+	check(IsInGameThread());
+
+	if (bSuccess)
+	{
+		OnSaved.Broadcast(FullPath, CapturedTexture);
+	}
+	else
+	{
+		OnFailed.Broadcast(FString(), nullptr);
+	}
+
+	SetReadyToDestroy();
+}
 
 bool UAsyncScreenshotRTAction::ScheduleNextFrame()
 {
@@ -521,8 +550,7 @@ bool UAsyncScreenshotRTAction::ScheduleNextFrame()
 	}
 
 	UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: World went away, abandoning the render target readback"));
-	OnSaveRenderTarget.Broadcast();
-	SetReadyToDestroy();
+	FinishSave(false, FString(), nullptr);
 	return false;
 }
 
@@ -542,8 +570,7 @@ void UAsyncScreenshotRTAction::OnNextFrame()
 			if (ReadRTData->ReadFailed)
 			{
 				UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: Render target readback failed, nothing was written"));
-				OnSaveRenderTarget.Broadcast();
-				SetReadyToDestroy();
+				FinishSave(false, FString(), nullptr);
 				return;
 			}
 
@@ -566,8 +593,7 @@ void UAsyncScreenshotRTAction::OnNextFrame()
 			if (GFrameCounter - StartFrame > MaxWaitFrames)
 			{
 				UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: Timed out waiting for render target readback"));
-				OnSaveRenderTarget.Broadcast();
-				SetReadyToDestroy();
+				FinishSave(false, FString(), nullptr);
 				return;
 			}
 
@@ -589,8 +615,7 @@ void UAsyncScreenshotRTAction::OnNextFrame()
 			if (GFrameCounter - StartFrame > MaxWaitFrames)
 			{
 				UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: Timed out waiting for render target readback"));
-				OnSaveRenderTarget.Broadcast();
-				SetReadyToDestroy();
+				FinishSave(false, FString(), nullptr);
 				return;
 			}
 
@@ -611,8 +636,7 @@ void UAsyncScreenshotRTAction::OnNextFrame()
 		if (CombinedData->ColorRT->ReadFailed || CombinedData->AlphaRT->ReadFailed)
 		{
 			UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: Render target readback failed, nothing was written"));
-			OnSaveRenderTarget.Broadcast();
-			SetReadyToDestroy();
+			FinishSave(false, FString(), nullptr);
 			return;
 		}
 
@@ -622,8 +646,7 @@ void UAsyncScreenshotRTAction::OnNextFrame()
 		if (Color.Num() != Alpha.Num())
 		{
 			UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: Color/Alpha RT size mismatch (%d vs %d)"), Color.Num(), Alpha.Num());
-			OnSaveRenderTarget.Broadcast();
-			SetReadyToDestroy();
+			FinishSave(false, FString(), nullptr);
 			return;
 		}
 
@@ -653,8 +676,7 @@ void UAsyncScreenshotRTAction::Activate()
 		if (!CachedWorld.IsValid() || !RT || !RT->GetResource())
 		{
 			UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: No world for the given context object, or an invalid render target"));
-			OnSaveRenderTarget.Broadcast();
-			SetReadyToDestroy();
+			FinishSave(false, FString(), nullptr);
 			break;
 		}
 
@@ -728,8 +750,7 @@ void UAsyncScreenshotRTAction::Activate()
 		if (!CachedWorld.IsValid() || !RT || !RT->GetResource() || !AlphaRT || !AlphaRT->GetResource())
 		{
 			UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: No world for the given context object, or an invalid render target"));
-			OnSaveRenderTarget.Broadcast();
-			SetReadyToDestroy();
+			FinishSave(false, FString(), nullptr);
 			break;
 		}
 

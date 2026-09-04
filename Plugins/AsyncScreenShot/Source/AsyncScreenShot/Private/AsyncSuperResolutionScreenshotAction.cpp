@@ -31,8 +31,7 @@ void UAsyncSuperResolutionScreenshotAction::Activate()
 	if (!World || !PC || !PC->PlayerCameraManager)
 	{
 		UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: No valid world/player controller/camera manager for super-resolution capture"));
-		OnSaved.Broadcast();
-		SetReadyToDestroy();
+		Finish(false, FString());
 		return;
 	}
 
@@ -58,8 +57,7 @@ void UAsyncSuperResolutionScreenshotAction::Activate()
 	if (!CaptureActor)
 	{
 		UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: Failed to spawn temporary capture actor"));
-		OnSaved.Broadcast();
-		SetReadyToDestroy();
+		Finish(false, FString());
 		return;
 	}
 
@@ -91,14 +89,23 @@ void UAsyncSuperResolutionScreenshotAction::Activate()
 	// CaptureScene() has queued the render; the readback's own fence orders the copy after it, so there is
 	// no reason to stall the game thread on a full RHI flush in a plugin whose whole point is not to.
 	InnerAction = UAsyncScreenshotRTAction::SaveRenderTarget(WorldContextObject, CaptureRT, SavedPathToSave, SavedName, /*bFlushRHI=*/false, bAutoUniqueName);
-	InnerAction->OnSaveRenderTarget.AddDynamic(this, &UAsyncSuperResolutionScreenshotAction::HandleInnerSaveComplete);
+	InnerAction->OnSaved.AddDynamic(this, &UAsyncSuperResolutionScreenshotAction::HandleInnerSaved);
+	InnerAction->OnFailed.AddDynamic(this, &UAsyncSuperResolutionScreenshotAction::HandleInnerFailed);
 	InnerAction->Activate();
 }
 
-void UAsyncSuperResolutionScreenshotAction::HandleInnerSaveComplete()
+void UAsyncSuperResolutionScreenshotAction::HandleInnerSaved(const FString& FullPath, UTexture2D* CapturedTexture)
 {
-	OnSaved.Broadcast();
+	Finish(true, FullPath);
+}
 
+void UAsyncSuperResolutionScreenshotAction::HandleInnerFailed(const FString& FullPath, UTexture2D* CapturedTexture)
+{
+	Finish(false, FString());
+}
+
+void UAsyncSuperResolutionScreenshotAction::Finish(bool bSuccess, const FString& FullPath)
+{
 	if (CaptureActor)
 	{
 		CaptureActor->Destroy();
@@ -107,6 +114,15 @@ void UAsyncSuperResolutionScreenshotAction::HandleInnerSaveComplete()
 	CaptureComponent = nullptr;
 	CaptureRT = nullptr;
 	InnerAction = nullptr;
+
+	if (bSuccess)
+	{
+		OnSaved.Broadcast(FullPath);
+	}
+	else
+	{
+		OnFailed.Broadcast(FString());
+	}
 
 	SetReadyToDestroy();
 }

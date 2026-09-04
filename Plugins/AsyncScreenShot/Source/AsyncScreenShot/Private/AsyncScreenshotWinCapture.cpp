@@ -122,7 +122,7 @@ static bool WriteBmpFromRgba(FILE* File, const std::vector<unsigned char>& Rgba,
 	return true;
 }
 
-bool CaptureWindowToFile(HWND hWnd, const FString& PathToSave, const FString& Name, EImageFormat ImageFormat, int32 Quality, bool bAutoUniqueName,
+bool CaptureWindowToFile(HWND hWnd, const FString& PathToSave, const FString& Name, EAsyncScreenshotImageFormat ImageFormat, int32 Quality, bool bAutoUniqueName,
 	int32 CropX, int32 CropY, int32 CropWidth, int32 CropHeight, float DownscaleFactor, FString& OutFullPath)
 {
 	if (!hWnd)
@@ -205,9 +205,9 @@ bool CaptureWindowToFile(HWND hWnd, const FString& PathToSave, const FString& Na
 	FString FormatEnd;
 	switch (ImageFormat)
 	{
-	case EImageFormat::bpm: FormatEnd = TEXT(".bmp"); break;
-	case EImageFormat::jpg: FormatEnd = TEXT(".jpg"); break;
-	case EImageFormat::png: FormatEnd = TEXT(".png"); break;
+	case EAsyncScreenshotImageFormat::Bmp: FormatEnd = TEXT(".bmp"); break;
+	case EAsyncScreenshotImageFormat::Jpg: FormatEnd = TEXT(".jpg"); break;
+	case EAsyncScreenshotImageFormat::Png: FormatEnd = TEXT(".png"); break;
 	default: FormatEnd = TEXT(".png"); break;
 	}
 
@@ -225,13 +225,13 @@ bool CaptureWindowToFile(HWND hWnd, const FString& PathToSave, const FString& Na
 	bool bWriteOk = false;
 	switch (ImageFormat)
 	{
-	case EImageFormat::jpg:
+	case EAsyncScreenshotImageFormat::Jpg:
 		bWriteOk = stbi_write_jpg_to_func(PngWriteCallback, File, Width, Height, 4, Rgba.data(), Quality) != 0;
 		break;
-	case EImageFormat::png:
+	case EAsyncScreenshotImageFormat::Png:
 		bWriteOk = stbi_write_png_to_func(PngWriteCallback, File, Width, Height, 4, Rgba.data(), Width * 4) != 0;
 		break;
-	case EImageFormat::bpm:
+	case EAsyncScreenshotImageFormat::Bmp:
 	default:
 		bWriteOk = WriteBmpFromRgba(File, Rgba, Width, Height);
 		break;

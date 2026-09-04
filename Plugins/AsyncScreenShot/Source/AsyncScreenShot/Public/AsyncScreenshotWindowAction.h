@@ -2,35 +2,42 @@
 
 #pragma once
 
+#include "CoreMinimal.h"
 #include "Kismet/BlueprintAsyncActionBase.h"
-#include "AsyncScreenShotBPLibrary.h"
+#include "AsyncScreenshotTypes.h"
 #include "AsyncScreenshotWindowAction.generated.h"
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FAsyncWindowCapturedPin, FString, FullPath);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE(FAsyncWindowFailedPin);
-
-// Captures the game window (same underlying capture as UAsyncScreenShotBPLibrary::SaveGameScreen) but as a proper
-// async Blueprint node with success/failure output pins, plus optional region-crop and downscale.
+/**
+ * Captures the game window through the OS rather than the renderer, so the result includes everything on
+ * screen, UMG widgets included. The encode and the file write run on a background thread.
+ *
+ * Same capture as UAsyncScreenShotBPLibrary::SaveGameScreen, but as a proper async node: it reports where
+ * the file landed, says so when it fails, and can crop and downscale.
+ */
 UCLASS()
-class UAsyncScreenshotWindowAction : public UBlueprintAsyncActionBase
+class ASYNCSCREENSHOT_API UAsyncScreenshotWindowAction : public UBlueprintAsyncActionBase
 {
 	GENERATED_BODY()
+
 public:
-	UFUNCTION(BlueprintCallable, meta = (BlueprintInternalUseOnly = "true"), Category = "ScreenshotTaker Functionality")
-	static UAsyncScreenshotWindowAction* CaptureGameScreen(FString PathToSave, FString Name, EImageFormat ImageFormat, int32 Quality = 80, bool bAutoUniqueName = false,
+	/** Crop values below zero mean "no crop". DownscaleFactor only scales down; values >= 1 are ignored. */
+	UFUNCTION(BlueprintCallable, meta = (BlueprintInternalUseOnly = "true"), Category = "AsyncScreenShot")
+	static UAsyncScreenshotWindowAction* CaptureGameScreen(FString PathToSave, FString Name, EAsyncScreenshotImageFormat ImageFormat, int32 Quality = 80, bool bAutoUniqueName = false,
 		int32 CropX = -1, int32 CropY = -1, int32 CropWidth = -1, int32 CropHeight = -1, float DownscaleFactor = 1.0f);
 
 	virtual void Activate() override;
 
+	/** The file that was written. Not necessarily the requested name: bAutoUniqueName may have suffixed it. */
 	UPROPERTY(BlueprintAssignable)
-	FAsyncWindowCapturedPin OnSaved;
+	FAsyncScreenshotFilePin OnSaved;
 
+	/** Fired with an empty path when the window could not be captured or the file could not be written. */
 	UPROPERTY(BlueprintAssignable)
-	FAsyncWindowFailedPin OnFailed;
+	FAsyncScreenshotFilePin OnFailed;
 
 	FString PathToSave;
 	FString Name;
-	EImageFormat ImageFormat;
+	EAsyncScreenshotImageFormat ImageFormat = EAsyncScreenshotImageFormat::Png;
 	int32 Quality = 80;
 	bool bAutoUniqueName = false;
 	int32 CropX = -1;

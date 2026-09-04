@@ -9,7 +9,7 @@
 #include "AsyncScreenshotWinCapture.h"
 #endif
 
-UAsyncScreenshotWindowAction* UAsyncScreenshotWindowAction::CaptureGameScreen(FString PathToSave, FString Name, EImageFormat ImageFormat, int32 Quality, bool bAutoUniqueName,
+UAsyncScreenshotWindowAction* UAsyncScreenshotWindowAction::CaptureGameScreen(FString PathToSave, FString Name, EAsyncScreenshotImageFormat ImageFormat, int32 Quality, bool bAutoUniqueName,
 	int32 CropX, int32 CropY, int32 CropWidth, int32 CropHeight, float DownscaleFactor)
 {
 	UAsyncScreenshotWindowAction* Node = NewObject<UAsyncScreenshotWindowAction>();
@@ -43,7 +43,7 @@ void UAsyncScreenshotWindowAction::Activate()
 	if (!hWnd)
 	{
 		UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: No valid game window HWND, aborting CaptureGameScreen"));
-		OnFailed.Broadcast();
+		OnFailed.Broadcast(FString());
 		SetReadyToDestroy();
 		return;
 	}
@@ -67,13 +67,14 @@ void UAsyncScreenshotWindowAction::Activate()
 			}
 			else
 			{
-				WeakThis->OnFailed.Broadcast();
+				WeakThis->OnFailed.Broadcast(FString());
 			}
 			WeakThis->SetReadyToDestroy();
 		});
 	});
 #else
-	OnFailed.Broadcast();
+	UE_LOG(LogTemp, Warning, TEXT("AsyncScreenshot: Window capture is only implemented on Windows"));
+	OnFailed.Broadcast(FString());
 	SetReadyToDestroy();
 #endif
 }

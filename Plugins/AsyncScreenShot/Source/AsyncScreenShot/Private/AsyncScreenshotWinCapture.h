@@ -2,7 +2,8 @@
 
 #pragma once
 
-#include "AsyncScreenShotBPLibrary.h"
+#include "CoreMinimal.h"
+#include "AsyncScreenshotTypes.h"
 
 #if PLATFORM_WINDOWS
 
@@ -15,7 +16,7 @@ namespace AsyncScreenShot::Private
 	// Captures the given window's client area (optionally cropped/downscaled) and writes it to disk as PNG/JPG/BMP.
 	// OutFullPath receives the path actually written to (may differ from the requested one if bAutoUniqueName avoided an overwrite).
 	// Returns true on success.
-	bool CaptureWindowToFile(HWND hWnd, const FString& PathToSave, const FString& Name, EImageFormat ImageFormat, int32 Quality, bool bAutoUniqueName,
+	bool CaptureWindowToFile(HWND hWnd, const FString& PathToSave, const FString& Name, EAsyncScreenshotImageFormat ImageFormat, int32 Quality, bool bAutoUniqueName,
 		int32 CropX, int32 CropY, int32 CropWidth, int32 CropHeight, float DownscaleFactor, FString& OutFullPath);
 
 	// Fetches the native HWND of the game's main viewport window. Must be called on the game thread
