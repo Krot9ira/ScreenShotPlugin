@@ -68,7 +68,7 @@ struct FAsyncReadCombinedRTData
 };
 
 UCLASS()
-class UAsyncScreenShotBPLibrary : public UBlueprintFunctionLibrary
+class ASYNCSCREENSHOT_API UAsyncScreenShotBPLibrary : public UBlueprintFunctionLibrary
 {
 	GENERATED_UCLASS_BODY()
 	/*When specifying the path, use / , for example C : / Users / Krot9ira /
