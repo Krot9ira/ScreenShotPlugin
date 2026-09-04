@@ -16,7 +16,6 @@
 #include "RenderingThread.h"
 #include "TextureResource.h"
 #include "Widgets/SWindow.h"
-#include "Runtime/Launch/Resources/Version.h"
 #include "TimerManager.h"
 #include "Engine/GameViewportClient.h"
 #include "Misc/Paths.h"
@@ -33,7 +32,7 @@
 // header for the declarations. The macro is undefined again so it cannot leak into the next file of a
 // unity build and emit the implementation a second time.
 #define STB_IMAGE_WRITE_IMPLEMENTATION
-#include "stb_image_write.h"
+#include "ThirdParty/stb_image_write.h"
 #undef STB_IMAGE_WRITE_IMPLEMENTATION
 
 
@@ -224,7 +223,7 @@ namespace AsyncScreenShot::Private
 		ReadData->FinishedRead = true;
 	}
 
-	void PollRTRead(FRHICommandListImmediate& RHICmdList, TSharedPtr<FAsyncReadEntireRTData, ESPMode::ThreadSafe> ReadData, TWeakObjectPtr<UAsyncScreenshotRTAction> ReadAction, bool bFlushRHI)
+	void PollRTRead(FRHICommandListImmediate& RHICmdList, const TSharedPtr<FAsyncReadEntireRTData, ESPMode::ThreadSafe>& ReadData, bool bFlushRHI)
 	{
 		SCOPED_NAMED_EVENT_TEXT("AsyncScreenshot::AsyncReadRT::PollRTRead", FColor::Magenta);
 
@@ -253,11 +252,7 @@ namespace AsyncScreenShot::Private
 		}
 		else
 		{
-#if (ENGINE_MAJOR_VERSION >= 5 && ENGINE_MINOR_VERSION >= 2)
 			GDynamicRHI->RHIMapStagingSurface_RenderThread(RHICmdList, ReadData->Texture, INDEX_NONE, ReadData->TextureFence, OutputBuffer, RowPitchInPixels, Height);
-#else
-			GDynamicRHI->RHIMapStagingSurface_RenderThread(RHICmdList, ReadData->Texture, ReadData->TextureFence, OutputBuffer, RowPitchInPixels, Height);
-#endif
 		}
 		ReadData->StartReading = true;
 
@@ -620,9 +615,9 @@ void UAsyncScreenshotRTAction::OnNextFrame()
 				return;
 			}
 
-			ENQUEUE_RENDER_COMMAND(FReadRTAsync)([WeakThis = TWeakObjectPtr<UAsyncScreenshotRTAction>(this), ReadRTData = ReadRTData](FRHICommandListImmediate& RHICmdList)
+			ENQUEUE_RENDER_COMMAND(FReadRTAsync)([ReadRTData = ReadRTData](FRHICommandListImmediate& RHICmdList)
 				{
-					AsyncScreenShot::Private::PollRTRead(RHICmdList, ReadRTData, WeakThis, false);
+					AsyncScreenShot::Private::PollRTRead(RHICmdList, ReadRTData, false);
 				});
 
 
@@ -645,12 +640,11 @@ void UAsyncScreenshotRTAction::OnNextFrame()
 			ENQUEUE_RENDER_COMMAND(PollRTs)(
 				[ColorData = CombinedData->ColorRT,
 				AlphaData = CombinedData->AlphaRT,
-				bFlushRHI = bFlushRHI,
-				WeakThis = TWeakObjectPtr<UAsyncScreenshotRTAction>(this)]
+				bFlushRHI = bFlushRHI]
 				(FRHICommandListImmediate& RHICmdList)
 				{
-					AsyncScreenShot::Private::PollRTRead(RHICmdList, ColorData, WeakThis, bFlushRHI);
-					AsyncScreenShot::Private::PollRTRead(RHICmdList, AlphaData, WeakThis, bFlushRHI);
+					AsyncScreenShot::Private::PollRTRead(RHICmdList, ColorData, bFlushRHI);
+					AsyncScreenShot::Private::PollRTRead(RHICmdList, AlphaData, bFlushRHI);
 				});
 			ScheduleNextFrame();
 			return;
@@ -709,7 +703,7 @@ void UAsyncScreenshotRTAction::Activate()
 
 		StartFrame = GFrameCounter;
 
-		ENQUEUE_RENDER_COMMAND(FCopyRTAsync)([bFlushRHI = bFlushRHI, AsyncReadPtr = TWeakObjectPtr<UAsyncScreenshotRTAction>(this), TextureRHI = TextureResource->GetRenderTargetTexture(), ReadData = ReadRTData](FRHICommandListImmediate& RHICmdList)
+		ENQUEUE_RENDER_COMMAND(FCopyRTAsync)([bFlushRHI = bFlushRHI, TextureRHI = TextureResource->GetRenderTargetTexture(), ReadData = ReadRTData](FRHICommandListImmediate& RHICmdList)
 			{
 				check(IsInRenderingThread());
 				check(TextureRHI.IsValid());
@@ -725,20 +719,10 @@ void UAsyncScreenshotRTAction::Activate()
 					int32 Width, Height;
 					Width = TextureRHI->GetSizeX();
 					Height = TextureRHI->GetSizeY();
-#if ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION > 2
 					FRHITextureCreateDesc TextureDesc = FRHITextureCreateDesc::Create2D(TEXT("AsyncScreenshotRTReadback"), Width, Height, TextureRHI->GetFormat());
 					TextureDesc.AddFlags(ETextureCreateFlags::CPUReadback);
 					TextureDesc.InitialState = ERHIAccess::CopyDest;
-#if ENGINE_MINOR_VERSION > 3
 					IORHITextureCPU = RHICmdList.CreateTexture(TextureDesc);
-
-#else // ENGINE_MINOR_VERSION
-					IORHITextureCPU = GDynamicRHI->RHICreateTexture(TextureDesc);
-#endif // ENGINE_MINOR_VERSION
-#else
-					FRHIResourceCreateInfo CreateInfo(TEXT("AsyncRTReadback"));
-					IORHITextureCPU = RHICreateTexture2D(Width, Height, TextureRHI->GetFormat(), 1, 1, TexCreate_CPUReadback, ERHIAccess::CopyDest, CreateInfo);
-#endif
 
 					FRHICopyTextureInfo CopyTextureInfo;
 					CopyTextureInfo.Size = FIntVector(Width, Height, 1);
@@ -761,7 +745,7 @@ void UAsyncScreenshotRTAction::Activate()
 				// If we flush the RHI then we can just go ahead and read the mapped texture asap
 				if (bFlushRHI)
 				{
-					AsyncScreenShot::Private::PollRTRead(RHICmdList, ReadData, AsyncReadPtr, bFlushRHI);
+					AsyncScreenShot::Private::PollRTRead(RHICmdList, ReadData, bFlushRHI);
 				}
 			});
 
@@ -807,7 +791,7 @@ void UAsyncScreenshotRTAction::Activate()
 
 						if (bFlushRHI)
 						{
-							AsyncScreenShot::Private::PollRTRead(RHICmdList, Data, nullptr, true);
+							AsyncScreenShot::Private::PollRTRead(RHICmdList, Data, true);
 						}
 					});
 			};

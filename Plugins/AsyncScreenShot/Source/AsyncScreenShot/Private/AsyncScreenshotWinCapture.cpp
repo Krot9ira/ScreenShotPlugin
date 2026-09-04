@@ -11,7 +11,7 @@
 #include "Misc/ScopeExit.h"
 #include "Widgets/SWindow.h"
 
-#include "stb_image_write.h"
+#include "ThirdParty/stb_image_write.h"
 
 #include <cstdlib>
 #include <cstring>
