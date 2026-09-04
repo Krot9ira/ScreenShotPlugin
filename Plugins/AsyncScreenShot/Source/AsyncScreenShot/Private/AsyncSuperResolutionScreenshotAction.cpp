@@ -17,13 +17,14 @@ UAsyncSuperResolutionScreenshotAction* UAsyncSuperResolutionScreenshotAction::Ca
 	Node->SavedPathToSave = PathToSave;
 	Node->SavedName = Name;
 	Node->bAutoUniqueName = bAutoUniqueName;
+	Node->RegisterWithGameInstance(WorldContextObject);
 
 	return Node;
 }
 
 void UAsyncSuperResolutionScreenshotAction::Activate()
 {
-	UWorld* World = WorldContextObject ? WorldContextObject->GetWorld() : nullptr;
+	UWorld* World = GEngine ? GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::ReturnNull) : nullptr;
 	APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr;
 
 	if (!World || !PC || !PC->PlayerCameraManager)

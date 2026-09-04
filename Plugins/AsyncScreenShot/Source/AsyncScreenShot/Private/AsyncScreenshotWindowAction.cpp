@@ -2,6 +2,8 @@
 
 #include "AsyncScreenshotWindowAction.h"
 #include "Async/Async.h"
+#include "Engine/Engine.h"
+#include "Engine/GameViewportClient.h"
 
 #if PLATFORM_WINDOWS
 #include "AsyncScreenshotWinCapture.h"
@@ -21,6 +23,15 @@ UAsyncScreenshotWindowAction* UAsyncScreenshotWindowAction::CaptureGameScreen(FS
 	Node->CropWidth = CropWidth;
 	Node->CropHeight = CropHeight;
 	Node->DownscaleFactor = DownscaleFactor;
+
+	// This node has no WorldContextObject pin, but it already needs the game viewport for the window
+	// handle, so the game instance can come from there. Without registering, nothing keeps the node alive
+	// while the capture runs on a background thread and the pins never fire.
+	if (GEngine && GEngine->GameViewport)
+	{
+		Node->RegisterWithGameInstance(GEngine->GameViewport->GetGameInstance());
+	}
+
 	return Node;
 }
 

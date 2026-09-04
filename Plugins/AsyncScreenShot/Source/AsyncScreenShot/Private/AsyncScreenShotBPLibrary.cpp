@@ -301,6 +301,7 @@ UAsyncScreenshotRTAction* UAsyncScreenshotRTAction::SaveRenderTarget(UObject* Wo
 	BlueprintNode->CropWidth = CropWidth;
 	BlueprintNode->CropHeight = CropHeight;
 	BlueprintNode->DownscaleFactor = DownscaleFactor;
+	BlueprintNode->RegisterWithGameInstance(WorldContextObject);
 
 	// TODO(hdr-crop): the .hdr export path writes the full, uncropped/undownscaled linear buffer -
 	// CropAndDownscaleColors only runs on the PNG/texture path. Warn instead of silently ignoring the request.
@@ -329,6 +330,7 @@ UAsyncScreenshotRTAction* UAsyncScreenshotRTAction::SaveRenderTargetsMultiplyAlp
 	Node->CombinedData->ColorRT = MakeShared<FAsyncReadEntireRTData, ESPMode::ThreadSafe>();
 	Node->CombinedData->AlphaRT = MakeShared<FAsyncReadEntireRTData, ESPMode::ThreadSafe>();
 	Node->CombinedData->Mode = Node->CombineMode;
+	Node->RegisterWithGameInstance(WorldContextObject);
 	return Node;
 }
 
@@ -490,6 +492,20 @@ void UAsyncScreenShotBPLibrary::SaveScreenshotMetadata(FString PathToSave, FStri
 // Safety net: if the GPU fence never signals (RT destroyed, GPU hang), bail out instead of polling forever.
 static constexpr uint64 MaxWaitFrames = 300;
 
+bool UAsyncScreenshotRTAction::ScheduleNextFrame()
+{
+	if (UWorld* World = CachedWorld.Get())
+	{
+		World->GetTimerManager().SetTimerForNextTick(this, &UAsyncScreenshotRTAction::OnNextFrame);
+		return true;
+	}
+
+	UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: World went away, abandoning the render target readback"));
+	OnSaveRenderTarget.Broadcast();
+	SetReadyToDestroy();
+	return false;
+}
+
 void UAsyncScreenshotRTAction::OnNextFrame()
 {
 	check(IsInGameThread());
@@ -534,7 +550,7 @@ void UAsyncScreenshotRTAction::OnNextFrame()
 
 
 
-			WorldContextObject->GetWorld()->GetTimerManager().SetTimerForNextTick(this, &UAsyncScreenshotRTAction::OnNextFrame);
+			ScheduleNextFrame();
 		}
 		break;
 	}
@@ -560,7 +576,7 @@ void UAsyncScreenshotRTAction::OnNextFrame()
 					AsyncScreenShot::Private::PollRTRead(RHICmdList, ColorData, WeakThis, bFlushRHI);
 					AsyncScreenShot::Private::PollRTRead(RHICmdList, AlphaData, WeakThis, bFlushRHI);
 				});
-			WorldContextObject->GetWorld()->GetTimerManager().SetTimerForNextTick(this, &UAsyncScreenshotRTAction::OnNextFrame);
+			ScheduleNextFrame();
 			return;
 		}
 
@@ -592,13 +608,15 @@ void UAsyncScreenshotRTAction::OnNextFrame()
 
 void UAsyncScreenshotRTAction::Activate()
 {
+	CachedWorld = GEngine ? GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::ReturnNull) : nullptr;
+
 	switch (CombineMode)
 	{
 	case EAsyncRTCombineMode::SingleRT:
 	{
-		if (!WorldContextObject || !RT || !RT->GetResource())
+		if (!CachedWorld.IsValid() || !RT || !RT->GetResource())
 		{
-			UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: Invalid WorldContextObject or RenderTarget"));
+			UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: No world for the given context object, or an invalid render target"));
 			OnSaveRenderTarget.Broadcast();
 			SetReadyToDestroy();
 			break;
@@ -666,14 +684,14 @@ void UAsyncScreenshotRTAction::Activate()
 				}
 			});
 
-		WorldContextObject->GetWorld()->GetTimerManager().SetTimerForNextTick(this, &UAsyncScreenshotRTAction::OnNextFrame);
+		ScheduleNextFrame();
 		break;
 	}
 	case EAsyncRTCombineMode::MultiplyAlpha:
 	{
-		if (!WorldContextObject || !RT || !RT->GetResource() || !AlphaRT || !AlphaRT->GetResource())
+		if (!CachedWorld.IsValid() || !RT || !RT->GetResource() || !AlphaRT || !AlphaRT->GetResource())
 		{
-			UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: Invalid WorldContextObject or RenderTargets"));
+			UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: No world for the given context object, or an invalid render target"));
 			OnSaveRenderTarget.Broadcast();
 			SetReadyToDestroy();
 			break;
@@ -717,7 +735,7 @@ void UAsyncScreenshotRTAction::Activate()
 		EnqueueRead(RT, CombinedData->ColorRT);
 		EnqueueRead(AlphaRT, CombinedData->AlphaRT);
 
-		WorldContextObject->GetWorld()->GetTimerManager().SetTimerForNextTick(this, &UAsyncScreenshotRTAction::OnNextFrame);
+		ScheduleNextFrame();
 		break;
 	}
 	}

@@ -44,6 +44,7 @@ enum class EAsyncRTCombineMode : uint8
 
 
 class UTextureRenderTarget2D;
+class UWorld;
 
 struct FAsyncReadEntireRTData
 {
@@ -146,6 +147,11 @@ public:
 
 	TSharedPtr<FAsyncReadEntireRTData, ESPMode::ThreadSafe> ReadRTData;
 
+	// Resolved once in Activate(). WorldContextObject may be an object that never had a world, and the
+	// world can be torn down while a readback is still in flight, so it is not safe to walk back through
+	// it every frame.
+	TWeakObjectPtr<UWorld> CachedWorld;
+
 	UPROPERTY(BlueprintAssignable)
 	FAsyncReadEntireRTOutputPin OnSaveRenderTarget;
 
@@ -158,6 +164,9 @@ public:
 protected:
 	UFUNCTION()
 	void OnNextFrame();
+
+	// Queues the next OnNextFrame tick. Finishes the action and returns false if the world is gone.
+	bool ScheduleNextFrame();
 
 	uint64 StartFrame;
 };
