@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2023 Grigoryev Daniil. All Rights Reserved.
+// Copyright (c) 2023 Grigoryev Daniil. All Rights Reserved.
 
 #if WITH_DEV_AUTOMATION_TESTS
 

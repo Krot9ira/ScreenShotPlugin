@@ -1,4 +1,4 @@
-﻿// Copyright Daniil Grigoriev. All Rights Reserved.
+// Copyright Daniil Grigoriev. All Rights Reserved.
 
 #pragma once
 
