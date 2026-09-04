@@ -1,2 +1,26 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# Normalise on LF in the repository and on checkout, so a Windows and a Linux clone are byte-identical
+# and diffs never show up as whole-file rewrites.
+* text=auto eol=lf
+
+# Unreal content is binary. Without this git tries to diff and merge it as text, which corrupts assets.
+*.uasset binary
+*.umap   binary
+*.upk    binary
+*.udk    binary
+
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.tga  binary
+*.docx binary
+
+*.cpp      text eol=lf
+*.h        text eol=lf
+*.cs       text eol=lf
+*.ini      text eol=lf
+*.md       text eol=lf
+*.uplugin  text eol=lf
+*.uproject text eol=lf
+
+# Third-party sources are vendored verbatim; keep them out of language statistics.
+Plugins/AsyncScreenShot/Source/AsyncScreenShot/Private/ThirdParty/** linguist-vendored
