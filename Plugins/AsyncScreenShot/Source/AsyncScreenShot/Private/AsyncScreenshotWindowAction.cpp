@@ -1,4 +1,4 @@
-// Copyright Grigoryev Daniil. All Rights Reserved.
+// Copyright (c) 2026 Daniil Grigoryev. All Rights Reserved.
 
 #include "AsyncScreenshotWindowAction.h"
 #include "Async/Async.h"

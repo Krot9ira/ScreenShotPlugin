@@ -1,4 +1,4 @@
-// Copyright Daniil Grigoriev. All Rights Reserved.
+// Copyright (c) 2026 Daniil Grigoryev. All Rights Reserved.
 
 using UnrealBuildTool;
 
@@ -8,8 +8,8 @@ public class AsyncScreenShotTests : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
-		// Tests for the AsyncScreenShot runtime module: save-path helper and the metadata
-		// JSON writer. GPU capture paths need a real frame and are not covered here.
+		// Covers the parts of AsyncScreenShot that do not need a GPU: the save path, the metadata sidecar,
+		// unique file naming and the crop/downscale maths. The capture paths themselves need a real frame.
 		PublicDependencyModuleNames.AddRange(new string[]
 		{
 			"Core",
@@ -22,5 +22,9 @@ public class AsyncScreenShotTests : ModuleRules
 		{
 			"Json"
 		});
+
+		// The interesting pure logic - unique naming, crop and downscale - lives in the runtime module's
+		// private headers. Tests are the one thing allowed to reach in there.
+		PrivateIncludePaths.Add(System.IO.Path.Combine(ModuleDirectory, "..", "AsyncScreenShot", "Private"));
 	}
 }

@@ -1,4 +1,4 @@
-// Copyright 2023 Grigoryev Daniil. All Rights Reserved.
+// Copyright (c) 2026 Daniil Grigoryev. All Rights Reserved.
 
 #include "AsyncScreenShot.h"
 

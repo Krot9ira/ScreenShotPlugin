@@ -1,4 +1,4 @@
-// Copyright 2023 Grigoryev Daniil. All Rights Reserved.
+// Copyright (c) 2026 Daniil Grigoryev. All Rights Reserved.
 
 #include "AsyncScreenShotBPLibrary.h"
 #include "AsyncScreenShot.h"
@@ -8,14 +8,9 @@
 #include "AsyncScreenshotWinCapture.h"
 #include "Engine/Texture2D.h"
 #include "Engine/TextureRenderTarget2D.h"
-#include "Async/TaskGraphInterfaces.h"
-#include "EngineGlobals.h"
 #include "Engine/Engine.h"
-#include "RenderUtils.h"
-#include "GameFramework/GameUserSettings.h"
 #include "RenderingThread.h"
 #include "TextureResource.h"
-#include "Widgets/SWindow.h"
 #include "TimerManager.h"
 #include "Engine/GameViewportClient.h"
 #include "Misc/Paths.h"
@@ -132,7 +127,7 @@ namespace AsyncScreenShot::Private
 
 	// Crops (optional) and downscales (optional, nearest-neighbor) an FColor pixel buffer in place.
 	// Used by the render-target readback path. Width/Height are updated to reflect the new dimensions.
-	static void CropAndDownscaleColors(TArray<FColor>& Pixels, int32& Width, int32& Height,
+	void CropAndDownscaleColors(TArray<FColor>& Pixels, int32& Width, int32& Height,
 		int32 CropX, int32 CropY, int32 CropWidth, int32 CropHeight, float DownscaleFactor)
 	{
 		if (CropWidth > 0 && CropHeight > 0 && Width > 0 && Height > 0)
@@ -283,13 +278,13 @@ namespace AsyncScreenShot::Private
 
 		if (Format == EPixelFormat::PF_B8G8R8A8)
 		{
-			const int32 BytesPerPixel = GPixelFormats[Format].BlockBytes; // = 4 для B8G8R8A8
+			const int32 BytesPerPixel = GPixelFormats[Format].BlockBytes; // 4 for B8G8R8A8
 			uint8* Src = static_cast<uint8*>(OutputBuffer);
 			FColor* Dst = ReadData->PixelColors.GetData();
 
 			for (int32 Y = 0; Y < Height; Y++)
 			{
-				// Смещение в байтах с учётом pitch
+				// Byte offset of the row, honouring the staging surface pitch rather than the width.
 				uint8* RowSrc = Src + Y * RowPitchInPixels * BytesPerPixel;
 				FMemory::Memcpy(Dst + Y * Width, RowSrc, Width * BytesPerPixel);
 			}

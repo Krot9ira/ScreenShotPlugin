@@ -1,4 +1,4 @@
-// Copyright Grigoryev Daniil. All Rights Reserved.
+// Copyright (c) 2026 Daniil Grigoryev. All Rights Reserved.
 
 #pragma once
 
@@ -20,7 +20,7 @@ namespace AsyncScreenShot::Private
 	bool EncodeWithPngCompressionLevel(TFunctionRef<bool()> Encode);
 
 	/** True if the file or directory exists. */
-	bool PathExists(const FString& Path);
+	ASYNCSCREENSHOT_API bool PathExists(const FString& Path);
 
 	/** Creates the directory tree the file will live in. */
 	bool CreateDirectoriesForFile(const FString& FilePath);
@@ -35,5 +35,13 @@ namespace AsyncScreenShot::Private
 	 * When bAutoUniqueName is true and FullPath already exists, appends a numeric suffix (_0001, _0002,
 	 * ...) until a free path is found, instead of silently overwriting an existing screenshot.
 	 */
-	FString MakeUniquePath(const FString& FullPath, bool bAutoUniqueName);
+	ASYNCSCREENSHOT_API FString MakeUniquePath(const FString& FullPath, bool bAutoUniqueName);
+
+	/**
+	 * Crops (optionally) and then downscales (optionally, nearest neighbour) a pixel buffer in place.
+	 * Width and Height are updated to the new dimensions. A crop rectangle that runs off the edge is
+	 * clamped rather than rejected; a DownscaleFactor of 1 or more is ignored, this never upscales.
+	 */
+	ASYNCSCREENSHOT_API void CropAndDownscaleColors(TArray<FColor>& Pixels, int32& Width, int32& Height,
+		int32 CropX, int32 CropY, int32 CropWidth, int32 CropHeight, float DownscaleFactor);
 }
