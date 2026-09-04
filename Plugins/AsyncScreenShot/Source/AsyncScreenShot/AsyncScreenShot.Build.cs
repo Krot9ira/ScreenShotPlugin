@@ -50,6 +50,7 @@ public class AsyncScreenShot : ModuleRules
 				"Slate",
 				"SlateCore",
 				"RenderCore",
+				"Json",
 
 				// ... add private dependencies that you statically link with here ...
 			}

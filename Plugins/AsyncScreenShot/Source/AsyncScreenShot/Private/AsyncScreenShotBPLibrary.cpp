@@ -3,6 +3,8 @@
 #include "AsyncScreenShotBPLibrary.h"
 #include "AsyncScreenShot.h"
 #include "AsyncScreenshotInternal.h"
+
+#include <atomic>
 #include "AsyncScreenshotWinCapture.h"
 #include "Engine/Texture2D.h"
 #include "Engine/TextureRenderTarget2D.h"
@@ -19,6 +21,10 @@
 #include "Engine/GameViewportClient.h"
 #include "Misc/Paths.h"
 #include "Misc/FileHelper.h"
+#include "HAL/FileManager.h"
+#include "Dom/JsonObject.h"
+#include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonWriter.h"
 #include "Async/Async.h"
 #include "Math/Float16Color.h"
 #include "Engine/World.h"
@@ -30,10 +36,6 @@
 #include "stb_image_write.h"
 #undef STB_IMAGE_WRITE_IMPLEMENTATION
 
-#include <vector>
-#include <stdio.h>
-#include <filesystem>
-namespace fs = std::filesystem;
 
 UAsyncScreenShotBPLibrary::UAsyncScreenShotBPLibrary(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
@@ -44,47 +46,58 @@ UAsyncScreenShotBPLibrary::UAsyncScreenShotBPLibrary(const FObjectInitializer& O
 namespace AsyncScreenShot::Private
 {
 
-	void PngWriteCallback(void* context, void* data, int size)
+	// Set from the game thread, read on the encode threads.
+	static std::atomic<int32> GPngCompressionLevel{ 8 };
+
+	void AppendEncodedBytes(void* Context, void* Data, int32 Size)
 	{
-		FILE* file = static_cast<FILE*>(context);
-		fwrite(data, 1, size, file);
+		TArray<uint8>* Buffer = static_cast<TArray<uint8>*>(Context);
+		Buffer->Append(static_cast<const uint8*>(Data), Size);
 	}
 
-	// Platform-agnostic helpers shared by both the GDI window capture path (Windows-only) and the RHI render-target
-	// readback path (portable). Keeping these outside the PLATFORM_WINDOWS guard is what lets the RT-based screenshot
-	// pipeline compile and run on non-Windows platforms too.
+	bool EncodeWithPngCompressionLevel(TFunctionRef<bool()> Encode)
+	{
+		// stb keeps the level in a global that the whole encode reads, so the assignment and the encode have
+		// to be held together or two concurrent captures race over it.
+		static FCriticalSection EncodeGuard;
+		FScopeLock Lock(&EncodeGuard);
+
+		stbi_write_png_compression_level = GPngCompressionLevel.load(std::memory_order_relaxed);
+		return Encode();
+	}
+
+	// These used to go through std::filesystem, whose non-error_code overloads throw - and the engine builds
+	// with exceptions disabled, so a full disk or a denied directory terminated the process instead of
+	// failing the capture.
 	bool PathExists(const FString& Path)
 	{
-#if PLATFORM_WINDOWS
-		return fs::exists(std::wstring(TCHAR_TO_WCHAR(*Path)));
-#else
-		return fs::exists(std::string(TCHAR_TO_UTF8(*Path)));
-#endif
+		IFileManager& FileManager = IFileManager::Get();
+		return FileManager.FileExists(*Path) || FileManager.DirectoryExists(*Path);
 	}
 
-	void CreateDirectoriesForFile(const FString& FilePath)
+	bool CreateDirectoriesForFile(const FString& FilePath)
 	{
-#if PLATFORM_WINDOWS
-		fs::create_directories(fs::path(std::wstring(TCHAR_TO_WCHAR(*FilePath))).parent_path());
-#else
-		fs::create_directories(fs::path(std::string(TCHAR_TO_UTF8(*FilePath))).parent_path());
-#endif
+		const FString Directory = FPaths::GetPath(FilePath);
+		return Directory.IsEmpty() || IFileManager::Get().MakeDirectory(*Directory, /*Tree*/ true);
 	}
 
-	FILE* OpenFileForWrite(const FString& Path)
+	bool WriteFile(const FString& FullPath, const TArray<uint8>& Bytes)
 	{
-		FILE* File = nullptr;
-#if PLATFORM_WINDOWS
-		std::wstring WidePath(TCHAR_TO_WCHAR(*Path));
-		_wfopen_s(&File, WidePath.c_str(), L"wb");
-#else
-		File = fopen(TCHAR_TO_UTF8(*Path), "wb");
-#endif
-		return File;
+		if (!CreateDirectoriesForFile(FullPath))
+		{
+			UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: Could not create the directory for %s"), *FullPath);
+			return false;
+		}
+
+		if (!FFileHelper::SaveArrayToFile(Bytes, *FullPath))
+		{
+			UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: Failed to write %s"), *FullPath);
+			return false;
+		}
+
+		return true;
 	}
 
-	// When bAutoUniqueName is true and FullPath already exists, appends a numeric suffix (_0001, _0002, ...)
-	// until a free path is found, instead of silently overwriting an existing screenshot.
 	FString MakeUniquePath(const FString& FullPath, bool bAutoUniqueName)
 	{
 		if (!bAutoUniqueName || !PathExists(FullPath))
@@ -96,14 +109,25 @@ namespace AsyncScreenShot::Private
 		const FString BaseName = FPaths::GetBaseFilename(FullPath);
 		const FString Ext = FPaths::GetExtension(FullPath, true);
 
-		for (int32 Suffix = 1; Suffix < 100000; ++Suffix)
+		// Resume from the last suffix handed out for this base name. Scanning from _0001 every time made each
+		// capture in a burst stat every file the previous ones had written.
+		static FCriticalSection CounterGuard;
+		static TMap<FString, int32> NextSuffixByBaseName;
+
+		FScopeLock Lock(&CounterGuard);
+		int32& NextSuffix = NextSuffixByBaseName.FindOrAdd(FullPath, 1);
+
+		for (; NextSuffix < 100000; ++NextSuffix)
 		{
-			FString Candidate = FPaths::Combine(Dir, FString::Printf(TEXT("%s_%04d"), *BaseName, Suffix)) + Ext;
+			FString Candidate = FPaths::Combine(Dir, FString::Printf(TEXT("%s_%04d"), *BaseName, NextSuffix)) + Ext;
 			if (!PathExists(Candidate))
 			{
+				++NextSuffix;
 				return Candidate;
 			}
 		}
+
+		UE_LOG(LogTemp, Warning, TEXT("AsyncScreenshot: Ran out of unique names for %s, overwriting"), *FullPath);
 		return FullPath;
 	}
 
@@ -393,24 +417,22 @@ namespace AsyncScreenShot::Private
 			if (bSaveToDisk)
 			{
 				FullPath = MakeUniquePath(FPaths::Combine(PathToSave, Name) + TEXT(".png"), bAutoUniqueName);
-				CreateDirectoriesForFile(FullPath);
 
 				SwapRedAndBlue(*Pixels);
 
-				if (FILE* File = OpenFileForWrite(FullPath))
+				TArray<uint8> Encoded;
+				bSucceeded = EncodeWithPngCompressionLevel([&]
 				{
-					bSucceeded = stbi_write_png_to_func(PngWriteCallback, File, InWidth, InHeight, 4, Pixels->GetData(), InWidth * 4) != 0;
-					fclose(File);
+					return stbi_write_png_to_func(AppendEncodedBytes, &Encoded, InWidth, InHeight, 4, Pixels->GetData(), InWidth * 4) != 0;
+				});
 
-					if (!bSucceeded)
-					{
-						UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: Failed to encode PNG: %s"), *FullPath);
-					}
+				if (!bSucceeded)
+				{
+					UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: Failed to encode PNG for %s"), *FullPath);
 				}
 				else
 				{
-					bSucceeded = false;
-					UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: Failed to open file for writing: %s"), *FullPath);
+					bSucceeded = WriteFile(FullPath, Encoded);
 				}
 
 				if (bReturnAsTexture)
@@ -454,25 +476,19 @@ namespace AsyncScreenShot::Private
 		{
 			SCOPED_NAMED_EVENT_TEXT("AsyncScreenshot::AsyncReadRT::WriteHDR", FColor::Magenta);
 
-			FString FullPath = MakeUniquePath(FPaths::Combine(PathToSave, Name) + TEXT(".hdr"), bAutoUniqueName);
-			CreateDirectoriesForFile(FullPath);
-			bool bSucceeded = true;
+			const FString FullPath = MakeUniquePath(FPaths::Combine(PathToSave, Name) + TEXT(".hdr"), bAutoUniqueName);
 
-			if (FILE* File = OpenFileForWrite(FullPath))
+			TArray<uint8> Encoded;
+			bool bSucceeded = stbi_write_hdr_to_func(AppendEncodedBytes, &Encoded, InWidth, InHeight, 4,
+				reinterpret_cast<const float*>(Pixels->GetData())) != 0;
+
+			if (!bSucceeded)
 			{
-				bSucceeded = stbi_write_hdr_to_func(PngWriteCallback, File, InWidth, InHeight, 4,
-					reinterpret_cast<const float*>(Pixels->GetData())) != 0;
-				fclose(File);
-
-				if (!bSucceeded)
-				{
-					UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: Failed to encode HDR: %s"), *FullPath);
-				}
+				UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: Failed to encode HDR for %s"), *FullPath);
 			}
 			else
 			{
-				bSucceeded = false;
-				UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: Failed to open file for writing: %s"), *FullPath);
+				bSucceeded = WriteFile(FullPath, Encoded);
 			}
 
 			AsyncTask(ENamedThreads::GameThread, [Action, bSucceeded, FullPath]()
@@ -496,24 +512,31 @@ FString UAsyncScreenShotBPLibrary::GetScreenshotSavePath()
 
 void UAsyncScreenShotBPLibrary::SetPngCompressionLevel(int32 Level)
 {
-	stbi_write_png_compression_level = FMath::Clamp(Level, 0, 9);
+	AsyncScreenShot::Private::GPngCompressionLevel.store(FMath::Clamp(Level, 0, 9), std::memory_order_relaxed);
 }
 
 bool UAsyncScreenShotBPLibrary::SaveScreenshotMetadata(FString PathToSave, FString Name, const TMap<FString, FString>& Metadata)
 {
-	FString Json = TEXT("{\n");
-	Json += FString::Printf(TEXT("  \"Timestamp\": \"%s\""), *FDateTime::Now().ToIso8601());
+	// This used to assemble the JSON by hand, escaping quotes and backslashes in values only. A key holding
+	// a quote, or a value holding a newline or a tab, produced a file nothing could parse back.
+	const TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
+	Root->SetStringField(TEXT("Timestamp"), FDateTime::Now().ToIso8601());
+
 	for (const TPair<FString, FString>& Pair : Metadata)
 	{
-		const FString EscapedValue = Pair.Value.Replace(TEXT("\\"), TEXT("\\\\")).Replace(TEXT("\""), TEXT("\\\""));
-		Json += FString::Printf(TEXT(",\n  \"%s\": \"%s\""), *Pair.Key, *EscapedValue);
+		Root->SetStringField(Pair.Key, Pair.Value);
 	}
-	Json += TEXT("\n}\n");
+
+	FString Json;
+	const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Json);
+	if (!FJsonSerializer::Serialize(Root, Writer))
+	{
+		UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: Failed to serialise screenshot metadata"));
+		return false;
+	}
 
 	const FString FullPath = FPaths::Combine(PathToSave, Name) + TEXT(".json");
-	AsyncScreenShot::Private::CreateDirectoriesForFile(FullPath);
-
-	if (!FFileHelper::SaveStringToFile(Json, *FullPath))
+	if (!AsyncScreenShot::Private::CreateDirectoriesForFile(FullPath) || !FFileHelper::SaveStringToFile(Json, *FullPath))
 	{
 		UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: Failed to write metadata sidecar: %s"), *FullPath);
 		return false;

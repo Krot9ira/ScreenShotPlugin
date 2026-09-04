@@ -86,40 +86,38 @@ static void CropAndDownscaleBytes(std::vector<unsigned char>& Pixels, int32& Wid
 	}
 }
 
-// Writes a 32bpp BGRA BMP from a top-down RGBA buffer (BMP's native row order is bottom-up).
-static bool WriteBmpFromRgba(FILE* File, const std::vector<unsigned char>& Rgba, int32 Width, int32 Height)
+// Appends a 32bpp BGRA BMP built from a top-down RGBA buffer (BMP rows run bottom-up).
+static void AppendBmpFromRgba(TArray<uint8>& Out, const std::vector<unsigned char>& Rgba, int32 Width, int32 Height)
 {
-	BITMAPFILEHEADER bmfHeader = {};
-	BITMAPINFOHEADER bi = {};
-	bi.biSize = sizeof(BITMAPINFOHEADER);
-	bi.biWidth = Width;
-	bi.biHeight = Height;
-	bi.biPlanes = 1;
-	bi.biBitCount = 32;
-	bi.biCompression = BI_RGB;
+	BITMAPFILEHEADER FileHeader = {};
+	BITMAPINFOHEADER InfoHeader = {};
+	InfoHeader.biSize = sizeof(BITMAPINFOHEADER);
+	InfoHeader.biWidth = Width;
+	InfoHeader.biHeight = Height;
+	InfoHeader.biPlanes = 1;
+	InfoHeader.biBitCount = 32;
+	InfoHeader.biCompression = BI_RGB;
 
-	const uint32 dwBmpSize = (uint32)Width * 4 * (uint32)Height;
-	bmfHeader.bfType = 0x4D42;
-	bmfHeader.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
-	bmfHeader.bfSize = dwBmpSize + bmfHeader.bfOffBits;
+	const uint32 PixelBytes = (uint32)Width * 4 * (uint32)Height;
+	FileHeader.bfType = 0x4D42;
+	FileHeader.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
+	FileHeader.bfSize = PixelBytes + FileHeader.bfOffBits;
 
-	fwrite(&bmfHeader, sizeof(bmfHeader), 1, File);
-	fwrite(&bi, sizeof(bi), 1, File);
+	Out.Reserve(FileHeader.bfSize);
+	Out.Append(reinterpret_cast<const uint8*>(&FileHeader), sizeof(FileHeader));
+	Out.Append(reinterpret_cast<const uint8*>(&InfoHeader), sizeof(InfoHeader));
 
-	std::vector<unsigned char> Row((size_t)Width * 4);
-	for (int32 Y = Height - 1; Y >= 0; Y--)
+	for (int32 Y = Height - 1; Y >= 0; --Y)
 	{
-		const unsigned char* Src = Rgba.data() + (size_t)Y * Width * 4;
-		for (int32 X = 0; X < Width; X++)
+		const unsigned char* SrcRow = Rgba.data() + (size_t)Y * Width * 4;
+		for (int32 X = 0; X < Width; ++X)
 		{
-			Row[X * 4 + 0] = Src[X * 4 + 2];
-			Row[X * 4 + 1] = Src[X * 4 + 1];
-			Row[X * 4 + 2] = Src[X * 4 + 0];
-			Row[X * 4 + 3] = Src[X * 4 + 3];
+			Out.Add(SrcRow[X * 4 + 2]);
+			Out.Add(SrcRow[X * 4 + 1]);
+			Out.Add(SrcRow[X * 4 + 0]);
+			Out.Add(SrcRow[X * 4 + 3]);
 		}
-		fwrite(Row.data(), 1, Row.size(), File);
 	}
-	return true;
 }
 
 bool CaptureWindowToFile(HWND hWnd, const FString& PathToSave, const FString& Name, EAsyncScreenshotImageFormat ImageFormat, int32 Quality, bool bAutoUniqueName,
@@ -211,36 +209,36 @@ bool CaptureWindowToFile(HWND hWnd, const FString& PathToSave, const FString& Na
 	default: FormatEnd = TEXT(".png"); break;
 	}
 
-	FString FullPath = FPaths::Combine(PathToSave, Name) + FormatEnd;
-	FullPath = MakeUniquePath(FullPath, bAutoUniqueName);
-	CreateDirectoriesForFile(FullPath);
+	const FString FullPath = MakeUniquePath(FPaths::Combine(PathToSave, Name) + FormatEnd, bAutoUniqueName);
 
-	FILE* File = OpenFileForWrite(FullPath);
-	if (!File)
-	{
-		UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: Failed to open file for writing: %s"), *FullPath);
-		return false;
-	}
-
-	bool bWriteOk = false;
+	TArray<uint8> Encoded;
+	bool bEncoded = false;
 	switch (ImageFormat)
 	{
 	case EAsyncScreenshotImageFormat::Jpg:
-		bWriteOk = stbi_write_jpg_to_func(PngWriteCallback, File, Width, Height, 4, Rgba.data(), Quality) != 0;
+		bEncoded = stbi_write_jpg_to_func(AppendEncodedBytes, &Encoded, Width, Height, 4, Rgba.data(), Quality) != 0;
 		break;
 	case EAsyncScreenshotImageFormat::Png:
-		bWriteOk = stbi_write_png_to_func(PngWriteCallback, File, Width, Height, 4, Rgba.data(), Width * 4) != 0;
+		bEncoded = EncodeWithPngCompressionLevel([&]
+		{
+			return stbi_write_png_to_func(AppendEncodedBytes, &Encoded, Width, Height, 4, Rgba.data(), Width * 4) != 0;
+		});
 		break;
 	case EAsyncScreenshotImageFormat::Bmp:
 	default:
-		bWriteOk = WriteBmpFromRgba(File, Rgba, Width, Height);
+		AppendBmpFromRgba(Encoded, Rgba, Width, Height);
+		bEncoded = true;
 		break;
 	}
-	fclose(File);
 
-	if (!bWriteOk)
+	if (!bEncoded)
 	{
-		UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: Failed to write image (stb error): %s"), *FullPath);
+		UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: Failed to encode the captured window for %s"), *FullPath);
+		return false;
+	}
+
+	if (!WriteFile(FullPath, Encoded))
+	{
 		return false;
 	}
 
