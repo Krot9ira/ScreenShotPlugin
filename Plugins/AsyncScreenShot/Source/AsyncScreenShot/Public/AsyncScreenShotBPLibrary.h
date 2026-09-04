@@ -50,7 +50,15 @@ struct FAsyncReadEntireRTData
 {
 	FGPUFenceRHIRef TextureFence;
 	FTextureRHIRef Texture;
-	TAtomic<bool> FinishedRead;
+	// Written on the rendering thread, polled on the game thread.
+	TAtomic<bool> FinishedRead{ false };
+
+	// Published on the rendering thread *before* FinishedRead, so a game thread that has observed
+	// FinishedRead == true is guaranteed to see this too. True means the readback produced nothing
+	// usable - the staging surface could not be mapped, or the render target uses a pixel format this
+	// plugin cannot convert. The colour buffers are empty in that case and nothing may be written.
+	TAtomic<bool> ReadFailed{ false };
+
 	bool StartReading = false;
 	TArray<FColor> PixelColors;
 

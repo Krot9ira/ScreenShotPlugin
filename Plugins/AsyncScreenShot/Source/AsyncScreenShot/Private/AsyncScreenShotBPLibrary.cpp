@@ -188,6 +188,16 @@ void UAsyncScreenShotBPLibrary::SaveGameScreen(FString PathToSave, FString Name,
 namespace AsyncScreenShot::Private
 {
 
+	// Marks a readback as having produced nothing usable. Order matters: ReadFailed is published before
+	// FinishedRead, which is the flag the game thread spins on.
+	static void FailReadback(const TSharedPtr<FAsyncReadEntireRTData, ESPMode::ThreadSafe>& ReadData)
+	{
+		ReadData->PixelColors.Empty();
+		ReadData->LinearColors.Empty();
+		ReadData->ReadFailed = true;
+		ReadData->FinishedRead = true;
+	}
+
 	void PollRTRead(FRHICommandListImmediate& RHICmdList, TSharedPtr<FAsyncReadEntireRTData, ESPMode::ThreadSafe> ReadData, TWeakObjectPtr<UAsyncScreenshotRTAction> ReadAction, bool bFlushRHI)
 	{
 		SCOPED_NAMED_EVENT_TEXT("AsyncScreenshot::AsyncReadRT::PollRTRead", FColor::Magenta);
@@ -206,8 +216,9 @@ namespace AsyncScreenShot::Private
 		}
 		ReadData->FinishedRead = false;
 		SCOPED_NAMED_EVENT_TEXT("AsyncScreenshot::AsyncReadRT::MapTexture", FColor::Magenta);
-		void* OutputBuffer = NULL;
-		int32 RowPitchInPixels, Height;
+		void* OutputBuffer = nullptr;
+		int32 RowPitchInPixels = 0;
+		int32 Height = 0;
 
 		if (bFlushRHI)
 		{
@@ -223,12 +234,31 @@ namespace AsyncScreenShot::Private
 #endif
 		}
 		ReadData->StartReading = true;
+
+		if (OutputBuffer == nullptr)
+		{
+			UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: Could not map the staging surface for readback"));
+			FailReadback(ReadData);
+			return;
+		}
+
 		const int32 Width = ReadData->Texture->GetSizeX();
 		check(RowPitchInPixels >= Width);
 		check(Height == ReadData->Texture->GetSizeY());
-		ReadData->PixelColors.Empty(Width * Height);
-		ReadData->PixelColors.SetNum(Width * Height);
 		const EPixelFormat Format = ReadData->Texture->GetFormat();
+
+		// Reject unsupported formats before allocating: both branches below write every pixel, which is what
+		// makes SetNumUninitialized safe. An unsupported format used to fall through leaving the buffer
+		// untouched, so a PNG of uninitialized memory ended up on disk.
+		if (Format != EPixelFormat::PF_B8G8R8A8 && Format != EPixelFormat::PF_FloatRGBA)
+		{
+			UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: Unsupported render target format %d (supported: PF_B8G8R8A8, PF_FloatRGBA); nothing will be written"), static_cast<int32>(Format));
+			RHICmdList.UnmapStagingSurface(ReadData->Texture);
+			FailReadback(ReadData);
+			return;
+		}
+
+		ReadData->PixelColors.SetNumUninitialized(Width * Height);
 
 		if (Format == EPixelFormat::PF_B8G8R8A8)
 		{
@@ -268,10 +298,6 @@ namespace AsyncScreenShot::Private
 				}
 			}
 		}
-		else
-		{
-			UE_LOG(LogTemp, Warning, TEXT("AsyncScreenshot: Unsupported RT format! Format: %d"), static_cast<int32>(Format));
-		}
 
 		RHICmdList.UnmapStagingSurface(ReadData->Texture);
 		ReadData->FinishedRead = true;
@@ -288,7 +314,6 @@ UAsyncScreenshotRTAction* UAsyncScreenshotRTAction::SaveRenderTarget(UObject* Wo
 	BlueprintNode->RT = RenderTarget;
 	BlueprintNode->bFlushRHI = bFlushRHI;
 	BlueprintNode->ReadRTData = MakeShared<FAsyncReadEntireRTData, ESPMode::ThreadSafe>();
-	BlueprintNode->ReadRTData->FinishedRead = false;
 	BlueprintNode->ReadRTData->bWantsLinearColor = bExportHDRForFloatRT;
 	BlueprintNode->SavedPathToSave = PathToSave;
 	BlueprintNode->SavedName = Name;
@@ -519,6 +544,14 @@ void UAsyncScreenshotRTAction::OnNextFrame()
 
 		if (ReadRTData->FinishedRead)
 		{
+			if (ReadRTData->ReadFailed)
+			{
+				UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: Render target readback failed, nothing was written"));
+				OnSaveRenderTarget.Broadcast();
+				SetReadyToDestroy();
+				return;
+			}
+
 			int32 Width = ReadRTData->Texture->GetSizeX();
 			int32 Height = ReadRTData->Texture->GetSizeY();
 
@@ -577,6 +610,14 @@ void UAsyncScreenshotRTAction::OnNextFrame()
 					AsyncScreenShot::Private::PollRTRead(RHICmdList, AlphaData, WeakThis, bFlushRHI);
 				});
 			ScheduleNextFrame();
+			return;
+		}
+
+		if (CombinedData->ColorRT->ReadFailed || CombinedData->AlphaRT->ReadFailed)
+		{
+			UE_LOG(LogTemp, Error, TEXT("AsyncScreenshot: Render target readback failed, nothing was written"));
+			OnSaveRenderTarget.Broadcast();
+			SetReadyToDestroy();
 			return;
 		}
 
